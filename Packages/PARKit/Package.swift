@@ -18,7 +18,11 @@ let package = Package(
         .target(name: "Par2Kit", dependencies: ["ModernPARCore"]),
         // SwiftUI views, scenes, commands. Engine-agnostic: depends only on Core's protocols.
         .target(name: "ModernPARUI", dependencies: ["ModernPARCore"]),
-        .testTarget(name: "ModernPARCoreTests", dependencies: ["ModernPARCore", "Par2Kit"]),
+        .testTarget(
+            name: "ModernPARCoreTests",
+            dependencies: ["ModernPARCore", "Par2Kit"],
+            resources: [.copy("Fixtures")]
+        ),
         .testTarget(name: "Par2KitTests", dependencies: ["Par2Kit"]),
     ]
 )

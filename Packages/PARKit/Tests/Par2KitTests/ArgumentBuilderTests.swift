@@ -1,5 +1,6 @@
-import Testing
 import ModernPARCore
+import Testing
+
 @testable import Par2Kit
 
 /// Placeholder shape assertions for the CLI argument mapping. Phase 2 expands this with the full

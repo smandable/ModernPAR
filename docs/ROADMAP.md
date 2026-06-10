@@ -81,6 +81,14 @@ These are the load-bearing calls that the phases below assume. Each resolves a r
 
 **Goal.** Pure-Swift, read-only parser for `.par2` (and PAR1 `.par`/`.pNN`) that powers the document model with **zero** engine dependency. Reading has no compatibility trap (only writing/repair does), so this is low-risk and unblocks the whole UI.
 
+> **Status: DONE (2026-06-09).** `Par2Parser`/`Par1Parser` in `ModernPARCore`, golden fixtures
+> from par2cmdline 1.1.1 and the original Intel `par` tool (run under Rosetta), 46 tests green
+> incl. hostile-input regressions (no `Int()`/overflow traps on crafted files, foreign-set
+> hijack prevention, corrupt-packet tolerance). `OperationSession.open` + `SetHeader` wire the
+> parser into the window (drop a `.par2`/folder, or the Open toolbar button). Notable spec
+> subtlety learned from the fixtures: Main-packet File IDs sort as **little-endian 16-byte
+> integers**, not memcmp order. Cross-tool read fixtures (turbo/MultiPar/ParPar) join in Phase 2.
+
 **Tasks.**
 - PAR2 packet scanner (doc-03 §2): find magic `PAR2\0PKT`, read length, **validate packet MD5 over bytes `[32, length)`** (not magic/length/MD5), dispatch on the 16-byte type tag, silently skip unrecognized/corrupt packets.
 - Decode Main (slice size + sorted File-ID lists), File Description (File ID, full MD5, MD5-16k, length, ASCII name), IFSC (per-slice MD5+CRC32), Creator, Unicode-filename. Compute Recovery Set ID = MD5(Main body); confirm File ID = MD5(MD5-16k ‖ len ‖ name).

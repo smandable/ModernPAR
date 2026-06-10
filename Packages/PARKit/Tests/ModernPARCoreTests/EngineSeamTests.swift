@@ -1,5 +1,6 @@
-import Testing
 import Foundation
+import Testing
+
 @testable import ModernPARCore
 @testable import Par2Kit
 
@@ -19,20 +20,22 @@ struct EngineSeamTests {
 
         // A roster is discovered…
         let roster = events.compactMap { event -> [FileEntry]? in
-            if case let .filesDiscovered(files) = event { return files }
+            if case .filesDiscovered(let files) = event { return files }
             return nil
         }.first
         #expect(roster?.isEmpty == false)
 
         // …every roster file ends OK…
-        let okIDs = Set(events.compactMap { event -> UUID? in
-            if case let .fileStatusChanged(id, status) = event, status == .ok { return id }
-            return nil
-        })
+        let okIDs = Set(
+            events.compactMap { event -> UUID? in
+                if case .fileStatusChanged(let id, let status) = event, status == .ok { return id }
+                return nil
+            })
         #expect(okIDs == Set(roster!.map(\.id)))
 
         // …and the operation finishes successfully with a green document status.
-        if case .finished(.success) = events.last {} else {
+        if case .finished(.success) = events.last {
+        } else {
             Issue.record("expected a successful finish, got \(String(describing: events.last))")
         }
         let reachedAllOK = events.contains {
