@@ -1,0 +1,28 @@
+# Build products
+build/
+.build/
+DerivedData/
+*.o
+*.swiftmodule
+
+# Xcode user data
+*.xcuserdata/
+xcuserdata/
+*.xcuserstate
+*.xcscmblueprint
+
+# Swift Package Manager
+.swiftpm/
+Packages/*/.build/
+
+# macOS
+.DS_Store
+
+# Claude Code per-user local settings (shared settings.json may be committed)
+.claude/settings.local.json
+
+# Secrets / signing
+*.p12
+*.cer
+*.provisionprofile
+notarization-credentials.json

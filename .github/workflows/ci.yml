@@ -1,0 +1,36 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-test:
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Show toolchain
+        run: swift --version && xcodebuild -version
+
+      - name: Unit tests (PARKit package)
+        run: swift test --package-path Packages/PARKit
+
+      - name: Lint (swift-format)
+        run: swift format lint --strict --recursive App Packages/PARKit/Sources
+
+      - name: Build app (Debug, arm64, unsigned)
+        run: |
+          xcodebuild -project ModernPAR.xcodeproj -scheme ModernPAR \
+            -configuration Debug -derivedDataPath build \
+            ARCHS=arm64 ONLY_ACTIVE_ARCH=YES \
+            CODE_SIGN_IDENTITY="-" CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=NO \
+            clean build
+
+  # Developer-ID signing + notarization runs only on tag pushes (not PRs). Defined in the
+  # build/distribution track; see docs/research/06-build-distribution.md.

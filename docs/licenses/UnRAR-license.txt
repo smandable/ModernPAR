@@ -1,0 +1,18 @@
+PLACEHOLDER — replace with the verbatim RARLAB UnRAR license.
+
+When the UnRAR source tarball (unrarsrc 7.2.4) is vendored in Phase 4, copy its
+`license.txt` here verbatim. The operative restriction to honor:
+
+    "The UnRAR sources may be used in any software to handle RAR archives without
+     limitations free of charge, but cannot be used to develop RAR (WinRAR)
+     compatible archiver and to re-create RAR compression algorithm, which is
+     proprietary. Distribution of modified UnRAR sources in separate form or as a
+     part of other software is permitted, provided that it is clearly stated in
+     the documentation and source comments that the code may not be used to
+     develop a RAR (WinRAR) compatible archiver."
+
+Obligation: reproduce this license text in the app's About / acknowledgements and keep
+the upstream source comments intact. ModernPAR only ever EXTRACTS RAR archives; it never
+creates them.
+
+Source: https://www.rarlab.com/rar_add.htm  (download "UnRAR source")
