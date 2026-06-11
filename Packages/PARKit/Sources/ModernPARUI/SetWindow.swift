@@ -8,7 +8,9 @@ import UniformTypeIdentifiers
 public struct SetWindow: View {
     @Environment(AppModel.self) private var model
     @State private var session = OperationSession()
-    @State private var showOutput = false
+    /// The par output pane is visible by default (owner preference, 2026-06-11); the toolbar
+    /// button collapses it. Becomes a persisted preference with the Phase 7 Settings work.
+    @State private var showOutput = true
 
     let route: SessionRoute?
     public init(route: SessionRoute?) { self.route = route }
