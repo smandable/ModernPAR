@@ -404,6 +404,15 @@ public:
 			threadActive = false;
 		}
 	}
+	// MODERNPAR PATCH (see par2cmdline-turbo VENDORED.txt): wait for the thread to drain its
+	// queue and exit after end(). Without this, deinit() returns while workers may still be
+	// mid-task — a use-after-free when an exception unwind frees their buffers/GF context.
+	void join() {
+		if(threadCreated) {
+			thread_join(thread);
+			threadCreated = false;
+		}
+	}
 	
 	size_t size() {
 		return q.size();

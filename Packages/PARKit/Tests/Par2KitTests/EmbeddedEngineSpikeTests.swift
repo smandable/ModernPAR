@@ -46,12 +46,12 @@ struct EmbeddedEngineSpikeTests {
     private func runShim(anchor: URL, repair: Bool, sink: LogSink) -> Par2ShimResult {
         let context = Unmanaged.passUnretained(sink).toOpaque()
         return par2shim_repair(
-            anchor.path, nil, 0, 0, repair ? 1 : 0,
+            anchor.path, nil, nil, 0, 0, 0, repair ? 1 : 0,
             { context, line, _ in
                 guard let context, let line else { return }
                 Unmanaged<LogSink>.fromOpaque(context).takeUnretainedValue()
                     .append(String(cString: line))
-            }, context)
+            }, context, nil, nil)
     }
 
     @Test func linkedEngineReportsPinnedVersion() {

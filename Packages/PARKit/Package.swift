@@ -23,8 +23,9 @@ let package = Package(
     targets: [
         // Pure Swift, UI-free, C/C++-free. The domain model + engine seams.
         .target(name: "ModernPARCore"),
-        // The embedded PAR2 engine: vendored par2cmdline-turbo v1.4.0 (GPL-2.0-or-later,
-        // unmodified — see vendor/VENDORED.txt) behind the extern "C" Par2Shim umbrella.
+        // The embedded PAR2 engine: vendored par2cmdline-turbo v1.4.0 (GPL-2.0-or-later;
+        // carries LOCAL PATCHES for safe cancellation — see vendor/VENDORED.txt before any
+        // version bump) behind the extern "C" Par2Shim umbrella.
         // Swift imports this as a plain C module, so no .Cxx interop propagates
         // (ARCHITECTURE.md §1.1, §2). SIMD note: SwiftPM cannot set per-file ISA flags, so
         // the per-ISA kernels rely on their internal platform guards — on arm64 the x86/SVE

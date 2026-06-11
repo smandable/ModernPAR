@@ -74,9 +74,11 @@ Par2Creator::~Par2Creator(void)
   delete mainpacket;
   delete creatorpacket;
 
-  delete [] (u8*)transferbuffer;
-
+  // MODERNPAR PATCH (see VENDORED.txt): quiesce the backend BEFORE freeing the buffer its
+  // workers read/write — with the patched joining deinit this makes exception unwinds safe.
   parpar.deinit();
+
+  delete [] (u8*)transferbuffer;
 
   std::vector<Par2CreatorSourceFile*>::iterator sourcefile = sourcefiles.begin();
   while (sourcefile != sourcefiles.end())

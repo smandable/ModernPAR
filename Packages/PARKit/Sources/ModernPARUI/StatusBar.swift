@@ -48,6 +48,7 @@ public struct StatusBar: View {
         case .repairing: return "Restoring files…"
         case .restoredSuccessfully: return "Files restored successfully."
         case .restoredWithRenames: return "Files restored successfully; one or more were renamed."
+        case .repairNeeded: return "Damage found — repair is possible."
         case .needMoreRecovery(let b):
             return "Cannot restore; need \(b) more recovery block\(b == 1 ? "" : "s")."
         case .onlyNonRecoverableMissing: return "Only non-recoverable files are missing."

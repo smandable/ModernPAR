@@ -42,7 +42,8 @@ struct StatusCatalogTests {
     @Test func greenEndStatesMatchTheOriginalStatusLineColors() {
         let green: [DocStatus] = [.allFilesOK, .restoredSuccessfully, .restoredWithRenames]
         let notGreen: [DocStatus] = [
-            .waitingToStart, .checking, .repairing, .needMoreRecovery(blocks: 3),
+            .waitingToStart, .checking, .repairing, .repairNeeded,
+            .needMoreRecovery(blocks: 3),
             .onlyNonRecoverableMissing, .notValid, .internalError,
         ]
         for status in green { #expect(status.isGreenEndState, "\(status)") }

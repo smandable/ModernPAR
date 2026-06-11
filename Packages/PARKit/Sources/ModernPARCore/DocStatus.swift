@@ -9,6 +9,8 @@ public enum DocStatus: Sendable, Equatable {
     case repairing  // DocStatus2
     case restoredSuccessfully  // DocStatus7      (green)
     case restoredWithRenames  // DocStatus8      (green)
+    /// Verify-only outcome: damage found and the recovery data suffices — awaiting consent.
+    case repairNeeded  // DocStatus3
     case needMoreRecovery(blocks: Int)  // DocStatus4      (retryable)
     case onlyNonRecoverableMissing  // DocStatus13/14
     case notValid  // DocStatus9

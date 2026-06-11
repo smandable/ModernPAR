@@ -10,9 +10,10 @@ import SwiftUI
 struct ModernPARApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
 
-    /// Phase 0 wires the `MockEngine`; Phase 2 swaps in `EmbeddedEngine` (primary; with
-    /// `HelperProcessEngine` as fallback) behind the same `PAR2Engine` protocol without touching the UI.
-    @State private var model = AppModel(par2Engine: MockEngine())
+    /// The real embedded engine (par2cmdline-turbo via Par2Shim) — swapped in behind the
+    /// `PAR2Engine` protocol without touching the UI, exactly as the seam was designed.
+    /// (`MockEngine` remains for tests/previews; `HelperProcessEngine` is the fallback.)
+    @State private var model = AppModel(par2Engine: EmbeddedEngine())
 
     var body: some Scene {
         WindowGroup(for: SessionRoute.self) { $route in

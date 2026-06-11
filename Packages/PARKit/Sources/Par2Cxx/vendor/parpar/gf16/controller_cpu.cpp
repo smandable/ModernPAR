@@ -197,10 +197,18 @@ void PAR2ProcCPU::freeProcessingMem() {
 	}
 }
 void PAR2ProcCPU::_deinit() {
+	// MODERNPAR PATCH (resolves upstream "TODO: join threads?"; see VENDORED.txt):
+	// quiesce in dependency order — the transfer thread submits compute work to thWorkers,
+	// so it drains first — and JOIN everything before freeGf(). Without the joins, freeGf()
+	// races in-flight kernels (use-after-free of the GF context / staging buffers) whenever
+	// deinit runs while work is pending, e.g. on ModernPAR's cancellation unwind.
+	transferThread.end();
+	transferThread.join();
 	for(auto& worker : thWorkers)
 		worker.end();
-	// TODO: join threads?
-	
+	for(auto& worker : thWorkers)
+		worker.join();
+
 	freeGf();
 }
 

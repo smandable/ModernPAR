@@ -75,14 +75,18 @@ public struct SetWindow: View {
                 } label: {
                     Label("Verify", systemImage: "checkmark.shield")
                 }
-                .disabled(session.isBusy || route == nil)
+                .disabled(session.isBusy || (session.anchorURL == nil && route == nil))
+                .help("Verify the open set (repairs automatically if damage is found)")
             }
         }
     }
 
     private func verify() {
-        guard let route else { return }
-        session.start(route, engine: model.par2Engine)
+        if session.anchorURL != nil {
+            session.startVerify(using: model.par2Engine)
+        } else if let route {
+            session.start(route, engine: model.par2Engine)
+        }
     }
 
     private var title: String {

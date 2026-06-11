@@ -3,9 +3,9 @@ import Observation
 
 /// Per-window, observable session driving one verify/repair/create/extract operation.
 ///
-/// It consumes the engine's `AsyncStream<EngineEvent>` and folds COALESCED batches into the model,
-/// so a 32 768-row table is never invalidated once per event. Cancellation cancels the consuming
-/// `Task`, whose termination kills the child process / stops the native loop (reproduces Cmd-.).
+/// It consumes the engine's `AsyncStream<EngineEvent>` and folds events into the model
+/// (@Observable coalesces SwiftUI invalidation per runloop turn). Cancellation cancels the
+/// consuming `Task`, whose termination stops the engine cooperatively (reproduces Cmd-.).
 /// (ARCHITECTURE.md §4.2)
 @MainActor
 @Observable
@@ -18,6 +18,10 @@ public final class OperationSession {
     /// The parsed set powering the header line — produced by the native read-only parser the
     /// moment a set is opened, before any engine runs. (ARCHITECTURE.md §1.3)
     public private(set) var parSet: ParSet?
+    /// What the user opened (file or folder) and the `.par2`/`.par` it anchored to — kept so
+    /// Verify can hand the engine a route with fresh security-scoped bookmarks.
+    public private(set) var openedURL: URL?
+    public private(set) var anchorURL: URL?
 
     /// Fast id → index map kept in sync with `rows` so batch application stays O(events), not O(n²).
     private var indexByID: [UUID: Int] = [:]
@@ -27,13 +31,30 @@ public final class OperationSession {
 
     public func start(_ route: SessionRoute, engine: any PAR2Engine) {
         cancel()
-        reset()
+        reset(keepingDocument: true)
         isBusy = true
         let stream = engine.run(route)
         task = Task { [weak self] in
             await self?.consume(stream)
+            // A superseded run must not clobber the replacing run's state.
+            guard !Task.isCancelled else { return }
             self?.isBusy = false
         }
+    }
+
+    /// Runs the engine against whatever `open(_:)` loaded, minting fresh security-scoped
+    /// bookmarks for the route. The Phase 2 bridge from "set on screen" to "real verify";
+    /// Phase 3 adds auto-verify and the folder-grant powerbox flow.
+    public func startVerify(using engine: any PAR2Engine) {
+        guard let anchorURL else { return }
+        var route = SessionRoute(mode: .verifyRepair)
+        route.anchorBookmark = try? ScopedAccess.bookmark(for: anchorURL)
+        if let openedURL,
+            (try? openedURL.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == true
+        {
+            route.folderBookmark = try? ScopedAccess.bookmark(for: openedURL)
+        }
+        start(route, engine: engine)
     }
 
     public func cancel() {
@@ -61,6 +82,8 @@ public final class OperationSession {
             let outcome = await Self.parse(url: url)
             guard let self, !Task.isCancelled else { return }
             self.parSet = outcome.parSet
+            self.openedURL = url
+            self.anchorURL = outcome.anchorURL
             self.rows = outcome.rows
             // first-wins, never trap: row ids are unique by construction, but they derive from
             // untrusted input — Dictionary(uniqueKeysWithValues:) would crash on a duplicate.
@@ -75,6 +98,7 @@ public final class OperationSession {
 
     private struct ParseOutcome: Sendable {
         var parSet: ParSet?
+        var anchorURL: URL?
         var rows: [FileEntry] = []
         var docStatus: DocStatus = .waitingToStart
         var logLines: [String] = []
@@ -93,6 +117,7 @@ public final class OperationSession {
                 outcome.logLines = ["No PAR file found at \(scope.url.lastPathComponent)."]
                 return outcome
             }
+            outcome.anchorURL = anchor
             if anchor.pathExtension.lowercased() == "par2" {
                 let set = try Par2Parser.loadSet(anchor: anchor)
                 let parSet = ParSet(par2: set)
@@ -181,25 +206,30 @@ public final class OperationSession {
         return Scope(url: url, didStart: url.startAccessingSecurityScopedResource())
     }
 
-    private func reset() {
+    /// `keepingDocument` preserves the parsed set, header, and anchor across an engine run
+    /// (the engine re-emits the roster; the document identity does not change).
+    private func reset(keepingDocument: Bool = false) {
         rows.removeAll(keepingCapacity: true)
         indexByID.removeAll(keepingCapacity: true)
         docStatus = .waitingToStart
         progress = 0
         log.removeAll(keepingCapacity: true)
-        parSet = nil
+        if !keepingDocument {
+            parSet = nil
+            openedURL = nil
+            anchorURL = nil
+        }
     }
 
+    /// Events are applied as they arrive — @Observable already coalesces SwiftUI invalidation
+    /// per main-runloop turn, so count-based batching only delayed the first paint (the roster
+    /// sat unapplied until 256 events accumulated). If profiling at the 32k-row scale test
+    /// (Phase 3) shows pressure, reintroduce a TIME-based flush, never a count threshold.
     private func consume(_ stream: AsyncStream<EngineEvent>) async {
-        var batch: [EngineEvent] = []
         for await event in stream {
-            batch.append(event)
-            if batch.count >= 256 {
-                apply(batch)
-                batch.removeAll(keepingCapacity: true)
-            }
+            guard !Task.isCancelled else { return }
+            apply([event])
         }
-        if !batch.isEmpty { apply(batch) }
     }
 
     /// Fold one coalesced batch of events into the model in a single pass. (ARCHITECTURE.md §4.2)
@@ -222,8 +252,25 @@ public final class OperationSession {
                 log.append(line)
             case .docStatusChanged(let status):
                 docStatus = status
-            case .finished:
+            case .finished(let result):
                 progress = 1
+                if case .failure(let error) = result {
+                    switch error {
+                    case .cancelled:
+                        break  // cancel() already restored terminal state
+                    case .notImplemented:
+                        docStatus = .internalError
+                        log.append("Operation failed: not implemented yet.")
+                    case .launchFailed(let reason):
+                        docStatus = .notValid
+                        log.append("Could not start the operation: \(reason)")
+                    case .engine(let code, let message):
+                        if docStatus == .checking || docStatus == .repairing {
+                            docStatus = .internalError
+                        }
+                        log.append("Engine failed (code \(code)): \(message)")
+                    }
+                }
             }
         }
     }

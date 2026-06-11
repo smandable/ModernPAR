@@ -124,6 +124,21 @@ These are the load-bearing calls that the phases below assume. Each resolves a r
   > `memorylimit` must NOT be 0 — the CLI defaults it to half of physical RAM, and the shim
   > now mirrors that (a literal 0 means a zero-byte working buffer and pathological
   > one-slice-at-a-time grinding). Remaining Phase 2 work below proceeds on the embed path.
+  >
+  > **Engine status (2026-06-11): `EmbeddedEngine` LANDED.** Verify/repair/create through the
+  > embedded turbo with live `EngineEvent` streams (`TurboOutputParser` shares the output
+  > vocabulary with the future helper engine), cooperative cancellation (cancel token polled in
+  > the shim's streambuf; throws unwind the engine), phase-weighted monotonic progress, and the
+  > folder's files passed as extra files (renamed/misnamed-data detection, incl. the engine's
+  > own `name.1` backups after an interrupted repair). An adversarial review confirmed and we
+  > fixed: a **use-after-free crash on cancel-mid-repair** (ParPar's worker pool was never
+  > joined — upstream's own "TODO: join threads?"; fixed via vendor patches recorded in
+  > `vendor/VENDORED.txt`), engine-run overlap after cancel (all embedded runs now serialize on
+  > one queue), Unicode/backslash filenames getting no per-file events (roster keyed by the
+  > engine's par2→local name translation), verify-only runs ending stuck on "Repairing", and
+  > swallowed engine failures. 68 tests green. **Still open in Phase 2: the
+  > `HelperProcessEngine` fallback implementation** (stub today; the shared output parser is
+  > ready for it) — both engines must then pass the same protocol-level suite.
 - Write `Par2Shim.{h,cpp}` (doc-04 §10): `extern "C"` `par2_verify` / `par2_repair` / `par2_create`, each taking POD args + a `bool (*cb)(void *ctx, int kind, double frac, const char *name, int status)` progress callback. The shim **catches all C++ exceptions** (libpar2 throws) and returns error codes; no `std::string`/`std::function`/templates cross the line.
 - `EmbeddedEngine: PAR2Engine` — runs the blocking C++ on `Task.detached`, bridges shim callbacks into `AsyncStream<EngineEvent>`. Cancellation: `continuation.onTermination` sets an atomic flag; the callback returns `false` to stop turbo cooperatively (this is the Cmd-. path, doc-04 §5.2).
 - Wire `cpuCoreLimit` to turbo's `-t` thread count (replaces the old GCD parallelism; satisfies "limit CPU cores").

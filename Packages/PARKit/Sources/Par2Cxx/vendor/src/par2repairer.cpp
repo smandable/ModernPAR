@@ -96,9 +96,11 @@ Par2Repairer::Par2Repairer(std::ostream &sout, std::ostream &serr, const NoiseLe
 
 Par2Repairer::~Par2Repairer(void)
 {
-  delete [] (u8*)transferbuffer;
-
+  // MODERNPAR PATCH (see VENDORED.txt): quiesce the backend BEFORE freeing the buffer its
+  // workers read/write — with the patched joining deinit this makes exception unwinds safe.
   parpar.deinit();
+
+  delete [] (u8*)transferbuffer;
 
   std::map<u32,RecoveryPacket*>::iterator rp = recoverypacketmap.begin();
   while (rp != recoverypacketmap.end())

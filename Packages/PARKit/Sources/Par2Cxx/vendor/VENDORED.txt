@@ -1,3 +1,27 @@
 par2cmdline-turbo v1.4.0 (https://github.com/animetosho/par2cmdline-turbo, tag v1.4.0)
-Vendored unmodified: src/, parpar/gf16/, parpar/hasher/, parpar/src/, COPYING.
+Vendored: src/, parpar/gf16/, parpar/hasher/, parpar/src/, COPYING.
 CLI-only and OpenCL files are excluded from the build in Package.swift, not deleted.
+
+LOCAL PATCHES (re-apply ALL of these when bumping the vendored version — every site is
+marked with "MODERNPAR PATCH" in the source):
+
+1. src/foreach_parallel.h — worker-thread exceptions are captured and rethrown on the
+   calling thread instead of hitting std::terminate (bare std::thread path) or being
+   silently swallowed (std::async wait() path); thread-creation failure mid-spawn joins
+   already-started workers before rethrowing. Required for Par2Shim's cooperative
+   cancellation, which throws from the output streambuf on engine threads.
+
+2. parpar/gf16/threadqueue.h — MessageThread gains join() (wait for the thread to drain
+   its queue and exit after end()).
+
+3. parpar/gf16/controller_cpu.cpp — PAR2ProcCPU::_deinit() quiesces in dependency order
+   (transferThread first — it submits compute work — then thWorkers) and JOINS everything
+   before freeGf(). Resolves upstream's "TODO: join threads?". Without this, deinit during
+   a cancellation unwind frees the GF context / staging buffers while kernels are still
+   running them (use-after-free, SIGSEGV reproduced).
+
+4. src/par2repairer.cpp + src/par2creator.cpp — destructors call parpar.deinit() BEFORE
+   delete[] transferbuffer (workers read/write that buffer; with patch 3's joining deinit
+   this ordering makes exception unwinds safe).
+
+Success-path behavior is unchanged by all patches.
