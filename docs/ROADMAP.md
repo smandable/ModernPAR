@@ -111,6 +111,19 @@ These are the load-bearing calls that the phases below assume. Each resolves a r
 
 **Tasks.**
 - **Spike first (mandatory, time-boxed).** Vendor turbo `src/` for tag **v1.4.0** into `Par2Cxx`; hand-write `config.h` for `arm64-apple` (endianness + intrinsics `#ifdef`s); add a clean umbrella header. Prove a trivial Swift call into one turbo symbol compiles and links. SPM treats headers as C by default and `exclude:` doesn't cover headers — this header/build vendoring is the most likely concrete failure point. **If the spike doesn't land in its box, fall back to Engine option B (below) for MVP and revisit embedding post-ship.**
+  > **Spike status: LANDED (2026-06-10).** turbo v1.4.0 vendored unmodified into
+  > `Packages/PARKit/Sources/Par2Cxx/vendor/` (src + parpar gf16/hasher; CLI/OpenCL/upstream-test
+  > files excluded in Package.swift, not deleted); committed hand-written `config/config.h`;
+  > `extern "C"` `par2shim.h` umbrella imported by Swift as a plain C module — **no `.Cxx`
+  > interop needed**, exactly as designed. Swift tests verify AND repair the golden fixture
+  > through the embedded engine (byte-identical restoration) and exceptions never cross the
+  > boundary. Findings: (1) the vendoring risk did not materialize — clean build on first try;
+  > (2) SPM's no-per-file-flags limit is handled by ParPar's own platform guards (x86/SVE
+  > kernels compile to dispatcher stubs; NEON + SHA3/CRC are compiler-baseline on
+  > arm64-apple, so the fast ARM paths are all live); (3) one real trap: `par2repair`'s
+  > `memorylimit` must NOT be 0 — the CLI defaults it to half of physical RAM, and the shim
+  > now mirrors that (a literal 0 means a zero-byte working buffer and pathological
+  > one-slice-at-a-time grinding). Remaining Phase 2 work below proceeds on the embed path.
 - Write `Par2Shim.{h,cpp}` (doc-04 §10): `extern "C"` `par2_verify` / `par2_repair` / `par2_create`, each taking POD args + a `bool (*cb)(void *ctx, int kind, double frac, const char *name, int status)` progress callback. The shim **catches all C++ exceptions** (libpar2 throws) and returns error codes; no `std::string`/`std::function`/templates cross the line.
 - `EmbeddedEngine: PAR2Engine` — runs the blocking C++ on `Task.detached`, bridges shim callbacks into `AsyncStream<EngineEvent>`. Cancellation: `continuation.onTermination` sets an atomic flag; the callback returns `false` to stop turbo cooperatively (this is the Cmd-. path, doc-04 §5.2).
 - Wire `cpuCoreLimit` to turbo's `-t` thread count (replaces the old GCD parallelism; satisfies "limit CPU cores").
