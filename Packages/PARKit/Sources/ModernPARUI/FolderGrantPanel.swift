@@ -29,14 +29,15 @@ public enum OpenSetPanel {
         panel.canChooseFiles = true
         panel.canChooseDirectories = true
         panel.allowsMultipleSelection = false
-        panel.message = "Choose a .par2 / .par file or .rar archive, or a folder containing a set."
+        panel.message =
+            "Choose a .par2 / .par file, a .rar/.zip archive, or a folder containing a set."
         panel.prompt = "Open"
         return panel.runModal() == .OK ? panel.url : nil
     }
 }
 
-/// Open panel for RAR archives (Cmd-U). Any volume of a set works — extraction normalizes
-/// to the first volume. (ROADMAP Phase 4)
+/// Open panel for archives (Cmd-U). Any volume of a RAR set works — extraction normalizes
+/// to the first volume. (ROADMAP Phase 4–5)
 @MainActor
 public enum OpenArchivePanel {
     public static func present() -> URL? {
@@ -44,7 +45,7 @@ public enum OpenArchivePanel {
         panel.canChooseFiles = true
         panel.canChooseDirectories = false
         panel.allowsMultipleSelection = false
-        panel.message = "Choose a .rar archive (any volume of a multi-part set)."
+        panel.message = "Choose a .rar archive (any volume of a multi-part set) or a .zip file."
         panel.prompt = "Extract"
         return panel.runModal() == .OK ? panel.url : nil
     }

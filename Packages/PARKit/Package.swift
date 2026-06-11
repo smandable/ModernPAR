@@ -146,10 +146,19 @@ let package = Package(
                 .define("NDEBUG"),
             ]
         ),
+        // Header bridge to the SYSTEM libarchive (BSD): the macOS SDK ships the
+        // libarchive.2.tbd link stub but not the headers, so archive.h/archive_entry.h are
+        // vendored at the runtime-matching version — see CLibArchive/VENDORED.txt for the
+        // version-skew rule before using any new API.
+        .target(
+            name: "CLibArchive",
+            exclude: ["COPYING", "VENDORED.txt"],
+            linkerSettings: [.linkedLibrary("archive")]
+        ),
         // Swift archive-extraction layer: RARExtractor (CUnrar consumed as a plain C module —
-        // no .Cxx interop; ZipExtractor joins in Phase 5). Injected into Core/UI behind the
-        // ArchiveExtractor protocol only.
-        .target(name: "ArchiveKit", dependencies: ["ModernPARCore", "CUnrar"]),
+        // no .Cxx interop) + ZipExtractor (system libarchive via CLibArchive). Injected into
+        // Core/UI behind the ArchiveExtractor protocol only.
+        .target(name: "ArchiveKit", dependencies: ["ModernPARCore", "CUnrar", "CLibArchive"]),
         // SwiftUI views, scenes, commands. Engine-agnostic: depends only on Core's protocols.
         .target(name: "ModernPARUI", dependencies: ["ModernPARCore"]),
         .testTarget(
@@ -161,9 +170,11 @@ let package = Package(
         // HelperProcessEngine tests spawn.
         .testTarget(
             name: "Par2KitTests", dependencies: ["Par2Kit", "Par2Cxx", "Par2HelperCLI"]),
+        // Par2Kit joins for the Phase 5 end-to-end pipeline test (create set → verify →
+        // chain into extraction with the real engines).
         .testTarget(
             name: "ArchiveKitTests",
-            dependencies: ["ArchiveKit", "ModernPARCore"],
+            dependencies: ["ArchiveKit", "ModernPARCore", "Par2Kit"],
             resources: [.copy("Fixtures")]
         ),
     ],

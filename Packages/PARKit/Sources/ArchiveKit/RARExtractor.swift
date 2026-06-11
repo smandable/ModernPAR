@@ -139,7 +139,7 @@ public final class RARExtractor: ArchiveExtractor, Sendable {
                 missingVolume: collector.missingVolume,
                 passwordWasConsulted: broker.wasConsulted,
                 wrongPasswordLikely: encryptedHeaders)
-            yieldFailure(error, continuation: continuation)
+            yieldExtractFailure(error, continuation: continuation)
             return
         }
 
@@ -166,14 +166,12 @@ public final class RARExtractor: ArchiveExtractor, Sendable {
             continuation: continuation)
 
         // ── Pass 2: extract into staging ────────────────────────────────────────────────
-        sweepStaleStaging(in: destFolder)
-        let staging = destFolder.appendingPathComponent(
-            ".ModernPAR-extract-\(UUID().uuidString.prefix(8))", isDirectory: true)
+        ExtractPlacement.sweepStaleStaging(in: destFolder)
+        let staging: URL
         do {
-            try FileManager.default.createDirectory(
-                at: staging, withIntermediateDirectories: false)
+            staging = try ExtractPlacement.makeStaging(in: destFolder)
         } catch {
-            yieldFailure(
+            yieldExtractFailure(
                 .engine(
                     code: Int32(UNRARSHIM_CREATE_ERROR.rawValue),
                     message:
@@ -214,9 +212,9 @@ public final class RARExtractor: ArchiveExtractor, Sendable {
         let placementAllowed = !aborted && completedLoop && terminalError != .badPassword
 
         if placementAllowed {
-            switch place(
-                staging: staging, destFolder: destFolder, archiveBase: archiveBase,
-                firstVolume: firstVolume,
+            switch ExtractPlacement.place(
+                staging: staging, destFolder: destFolder, fallbackName: archiveBase,
+                isReservedTarget: { RARVolumes.belongsToSet($0, firstVolume: firstVolume) },
                 conflicts: ConflictBroker(resolver: conflicts, token: token),
                 continuation: continuation)
             {
@@ -234,7 +232,7 @@ public final class RARExtractor: ArchiveExtractor, Sendable {
                         .logLine(
                             "Extracted \(bridge.succeeded) of \(rows.count) file(s); \(bridge.failed) failed."
                         ))
-                    yieldFailure(terminalError, continuation: continuation)
+                    yieldExtractFailure(terminalError, continuation: continuation)
                 } else {
                     continuation.yield(.docStatusChanged(.extractedSuccessfully))
                     continuation.yield(.finished(.success(OperationSummary())))
@@ -253,37 +251,19 @@ public final class RARExtractor: ArchiveExtractor, Sendable {
                     return
                 }
             case .failed(let message):
-                yieldFailure(
+                yieldExtractFailure(
                     .engine(code: Int32(UNRARSHIM_WRITE_ERROR.rawValue), message: message),
                     continuation: continuation)
                 return
             }
         }
 
-        yieldFailure(
+        yieldExtractFailure(
             terminalError
                 ?? .engine(
                     code: Int32(result.rawValue),
                     message: "Extraction ended unexpectedly (code \(result.rawValue))."),
             continuation: continuation)
-    }
-
-    /// Reclaims staging folders orphaned by a hard crash/power loss (the in-run cleanup is a
-    /// `defer`, which cannot run if the process dies). Only sweeps clearly-stale ones so a
-    /// hypothetical concurrent extraction from another ModernPAR process is not disturbed.
-    private static func sweepStaleStaging(in folder: URL) {
-        let manager = FileManager.default
-        guard
-            let entries = try? manager.contentsOfDirectory(
-                at: folder, includingPropertiesForKeys: [.creationDateKey], options: [])
-        else { return }
-        let cutoff = Date(timeIntervalSinceNow: -3600)
-        for entry in entries where entry.lastPathComponent.hasPrefix(".ModernPAR-extract-") {
-            let created =
-                (try? entry.resourceValues(forKeys: [.creationDateKey]))?.creationDate
-                ?? .distantPast
-            if created < cutoff { try? manager.removeItem(at: entry) }
-        }
     }
 
     // MARK: - Shim calls
@@ -396,106 +376,7 @@ public final class RARExtractor: ArchiveExtractor, Sendable {
             && requiredKiB * 1024 <= ProcessInfo.processInfo.physicalMemory / 2
     }
 
-    // MARK: - Placement
-
-    private enum Placement {
-        case placed(URL)
-        case cancelledByUser
-        case nothingToPlace
-        case failed(String)
-    }
-
-    /// Moves the staged output into the destination: a single top-level item lands directly
-    /// (no enclosing folder); multiple items land in a folder named after the archive.
-    /// (ROADMAP Phase 4 "output placement")
-    private static func place(
-        staging: URL,
-        destFolder: URL,
-        archiveBase: String,
-        firstVolume: URL,
-        conflicts: ConflictBroker,
-        continuation: AsyncStream<EngineEvent>.Continuation
-    ) -> Placement {
-        let manager = FileManager.default
-        let items: [URL]
-        do {
-            items = try manager.contentsOfDirectory(
-                at: staging, includingPropertiesForKeys: nil, options: [])
-        } catch {
-            return .failed("Could not read the extraction output: \(error.localizedDescription)")
-        }
-        guard !items.isEmpty else { return .nothingToPlace }
-
-        let source: URL
-        var target: URL
-        if items.count == 1 {
-            source = items[0]
-            target = destFolder.appendingPathComponent(items[0].lastPathComponent)
-        } else {
-            source = staging
-            target = destFolder.appendingPathComponent(archiveBase)
-        }
-
-        // Never let the conflict dialog put the SOURCE archive (or a sibling volume of its
-        // set) in the Trash because an output name collides with it — rename instead.
-        if RARVolumes.belongsToSet(target, firstVolume: firstVolume) {
-            let safe = RARVolumes.uniqueDestination(for: target)
-            continuation.yield(
-                .logLine(
-                    "Output name \(target.lastPathComponent) collides with the archive — extracting as \(safe.lastPathComponent)."
-                ))
-            target = safe
-        }
-
-        if manager.fileExists(atPath: target.path) {
-            switch conflicts.resolveSync(conflictAt: target) {
-            case .overwrite:
-                do {
-                    try trashOrRemove(target)
-                } catch {
-                    return .failed(
-                        "Could not replace \(target.lastPathComponent): \(error.localizedDescription)"
-                    )
-                }
-                continuation.yield(.logLine("Replaced existing \(target.lastPathComponent)."))
-            case .keepBoth:
-                target = RARVolumes.uniqueDestination(for: target)
-                continuation.yield(
-                    .logLine("Keeping both — extracting as \(target.lastPathComponent)."))
-            case .ask, .cancel:
-                return .cancelledByUser
-            }
-        }
-
-        do {
-            try manager.moveItem(at: source, to: target)
-        } catch {
-            return .failed(
-                "Could not move the extracted files into place: \(error.localizedDescription)")
-        }
-        return .placed(target)
-    }
-
-    /// Prefer the Trash (recoverable) for "overwrite"; fall back to deletion where the Trash
-    /// is unavailable (some network volumes).
-    private static func trashOrRemove(_ url: URL) throws {
-        do {
-            try FileManager.default.trashItem(at: url, resultingItemURL: nil)
-        } catch {
-            try FileManager.default.removeItem(at: url)
-        }
-    }
-
     // MARK: - Result mapping (ROADMAP: "map the UnRAR error domain to readable messages")
-
-    private static func yieldFailure(
-        _ error: EngineError, continuation: AsyncStream<EngineEvent>.Continuation
-    ) {
-        if case .engine(_, let message) = error {
-            continuation.yield(.logLine(message))
-        }
-        continuation.yield(.finished(.failure(error)))
-    }
 
     private static func mappedError(
         code: UnrarShimResult,

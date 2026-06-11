@@ -21,6 +21,9 @@ struct ModernPARApp: App {
         par2Engine: EmbeddedEngine(),
         archiveExtractor: RARExtractor(keepBrokenFiles: {
             UserDefaults.standard.bool(forKey: Settings.keepBrokenKey)
+        }),
+        zipExtractor: ZipExtractor(keepBrokenFiles: {
+            UserDefaults.standard.bool(forKey: Settings.keepBrokenKey)
         }))
 
     var body: some Scene {

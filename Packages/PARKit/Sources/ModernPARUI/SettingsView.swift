@@ -17,6 +17,9 @@ public struct SettingsView: View {
                 }
                 Toggle("Repair automatically after verifying", isOn: $settings.autoRepair)
                 Toggle("Move PAR files to Trash after success", isOn: $settings.autoDeleteParFiles)
+                Toggle(
+                    "Automatically post-process files after repair",
+                    isOn: $settings.autoPostProcess)
             }
             .formStyle(.grouped)
             .tabItem { Label("Basic", systemImage: "gearshape") }

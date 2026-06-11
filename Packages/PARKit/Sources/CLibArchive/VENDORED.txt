@@ -1,0 +1,27 @@
+CLibArchive vendored-header provenance
+======================================
+
+include/archive.h, include/archive_entry.h — libarchive release 3.7.4
+  Upstream:  https://github.com/libarchive/libarchive
+  Tarball:   https://github.com/libarchive/libarchive/releases/download/v3.7.4/libarchive-3.7.4.tar.gz
+  SHA-256:   7875d49596286055b52439ed42f044bd8ad426aa4cc5aabd96bfe7abb971d5e8
+  Fetched:   2026-06-11
+  License:   COPYING in this directory (BSD-2-Clause for these headers)
+
+LOCAL MODIFICATIONS: none. Headers are byte-identical to the tarball.
+
+Why vendored: macOS ships the libarchive RUNTIME (linked via the SDK's
+libarchive.2.tbd stub; the dylib lives in the dyld shared cache) but does NOT
+ship archive.h/archive_entry.h in the SDK. The header version is pinned to the
+runtime version macOS reports (`bsdtar --version` → libarchive 3.7.4 on the
+machine this was verified on, 2026-06-09 — docs/research/05 §2).
+
+Version-skew rule: Apple's runtime may lag upstream on other macOS releases.
+Only long-stable APIs may be used through this module (the archive_read_* /
+archive_write_disk_* streaming loop — stable since libarchive 2.x); never call
+3.7-only symbols without a runtime availability check, or older systems will
+fail at dyld load with a missing-symbol abort.
+
+This target is BSD-licensed glue: it links the SYSTEM libarchive, redistributes
+nothing but the two headers, and creates no GPL/UnRAR licensing interactions
+(THIRD-PARTY-LICENSES.md).

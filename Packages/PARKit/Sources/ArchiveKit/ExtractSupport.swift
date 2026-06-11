@@ -221,6 +221,24 @@ final class ExtractBridge: @unchecked Sendable {
         }
     }
 
+    /// Raw diagnostic line into the par-output pane (engine error details).
+    func note(_ line: String) {
+        continuation.yield(.logLine(line))
+    }
+
+    /// A warning-class skip (refused symlink, duplicate name, unwritable entry): reported and
+    /// counted as skipped — NOT a data failure, so it never reads as "the archive is damaged"
+    /// nor feeds the wrong-password heuristic.
+    func skip(_ name: String, reason: String) {
+        lock.lock()
+        skippedCount += 1
+        lock.unlock()
+        if let id = idsByName[name] {
+            continuation.yield(.fileStatusChanged(id: id, status: .notInSet))
+        }
+        continuation.yield(.logLine("Skipped \"\(name)\" (\(reason))."))
+    }
+
     /// Engine code 21 (UNRARSHIM_UNKNOWN_ERROR) on a per-file basis means the entry was
     /// SKIPPED with a warning (e.g. an unsafe/absolute symlink the engine never extracts) —
     /// reported, but it must not read as data damage.

@@ -29,7 +29,8 @@ public final class OperationSession {
         case extract(
             extractor: any ArchiveExtractor,
             password: any PasswordProvider,
-            conflicts: any ConflictResolver)
+            conflicts: any ConflictResolver,
+            preservingHistory: Bool)
     }
     private var pendingGrantAction: PendingGrantAction?
     /// What the user opened (file or folder) and the `.par2`/`.par` it anchored to — kept so
@@ -41,6 +42,15 @@ public final class OperationSession {
     /// The terminal error of the last run, if it failed — the UI reacts to extraction's
     /// `.badPassword` / `.passwordNeeded` by re-prompting and re-running.
     public private(set) var lastError: EngineError?
+    /// Bumped each time a VERIFY/REPAIR run ends in a green state — the post-processing
+    /// trigger (ROADMAP Phase 5). Extraction runs never bump it, so a chained extraction's
+    /// own green end state cannot re-fire the chain.
+    public private(set) var postProcessReady = 0
+
+    /// Which kind of operation the current/last run was — post-processing only chains off
+    /// verify/repair, and the UI's archive affordances key off extraction.
+    private enum RunKind { case verifyRepair, extract }
+    private var runKind: RunKind = .verifyRepair
 
     /// Fast id → index map kept in sync with `rows` so batch application stays O(events), not O(n²).
     private var indexByID: [UUID: Int] = [:]
@@ -51,6 +61,10 @@ public final class OperationSession {
     public func start(_ route: SessionRoute, engine: any PAR2Engine) {
         cancel()
         reset(keepingDocument: true)
+        // Only a verify/repair run may arm the post-process chain — a future create run
+        // (Phase 6) ending green over a roster that names the source archive must NOT
+        // auto-extract the set the user just protected.
+        runKind = route.mode == .verifyRepair ? .verifyRepair : .extract
         setBusy(true)
         let stream = engine.run(route)
         task = Task { [weak self] in
@@ -67,9 +81,25 @@ public final class OperationSession {
     public func startVerify(using engine: any PAR2Engine, autoRepair: Bool = true) {
         guard let anchorURL else { return }
         var route = SessionRoute(mode: .verifyRepair, autoRepair: autoRepair)
-        route.anchorBookmark = try? ScopedAccess.bookmark(for: anchorURL)
-        route.folderBookmark = folderGrantBookmark()
+        mintBookmarks(into: &route, anchor: anchorURL)
         start(route, engine: engine)
+    }
+
+    /// Mints the route's folder + anchor bookmarks. CRITICAL: the anchor bookmark is created
+    /// WHILE the folder grant's security scope is active. When folder access comes from a
+    /// FolderAccessStore bookmark remembered in a PREVIOUS launch (the second-launch flow:
+    /// double-click data.par2 after the folder was granted once), the anchor file is reachable
+    /// only inside that scope — minting its bookmark outside the scope returns nil and the run
+    /// dies with "session has no anchor bookmark". (Phase 5 review)
+    private func mintBookmarks(into route: inout SessionRoute, anchor: URL) {
+        let folderBookmark = folderGrantBookmark()
+        route.folderBookmark = folderBookmark
+        if let folderBookmark, let scope = try? ScopedAccess.resolve(folderBookmark) {
+            defer { if scope.didStart { scope.url.stopAccessingSecurityScopedResource() } }
+            route.anchorBookmark = try? ScopedAccess.bookmark(for: anchor)
+        } else {
+            route.anchorBookmark = try? ScopedAccess.bookmark(for: anchor)
+        }
     }
 
     /// The best available folder grant for engine I/O: the opened folder itself, or a
@@ -119,10 +149,12 @@ public final class OperationSession {
         using extractor: any ArchiveExtractor,
         destination: ExtractDestination = .besideArchive,
         password: any PasswordProvider,
-        conflicts: any ConflictResolver
+        conflicts: any ConflictResolver,
+        preservingHistory: Bool = false
     ) {
         cancel()
-        reset(keepingDocument: true)
+        reset(keepingDocument: true, keepingLog: preservingHistory)
+        runKind = .extract
         if let data = route.anchorBookmark, let resolved = try? ScopedAccess.resolve(data) {
             // Record what we're extracting for the title bar / re-runs; the extractor manages
             // its own scoped access, so balance the resolve immediately.
@@ -176,29 +208,52 @@ public final class OperationSession {
     public func requestExtract(
         using extractor: any ArchiveExtractor,
         password: any PasswordProvider,
-        conflicts: any ConflictResolver
+        conflicts: any ConflictResolver,
+        preservingHistory: Bool = false
     ) {
         guard anchorURL != nil, !isBusy else { return }
         if needsFolderGrant {
             pendingGrantAction = .extract(
-                extractor: extractor, password: password, conflicts: conflicts)
+                extractor: extractor, password: password, conflicts: conflicts,
+                preservingHistory: preservingHistory)
             awaitingFolderGrant = true
         } else {
-            startExtractFromAnchor(using: extractor, password: password, conflicts: conflicts)
+            startExtractFromAnchor(
+                using: extractor, password: password, conflicts: conflicts,
+                preservingHistory: preservingHistory)
         }
+    }
+
+    /// Post-processing: chains the just-verified set into extracting its archive payload
+    /// WITHIN this session — the anchor moves to the archive, the log carries over, and the
+    /// extraction streams through the same event machinery. (ROADMAP Phase 5)
+    public func chainIntoArchive(
+        _ archiveURL: URL,
+        ruleName: String,
+        using extractor: any ArchiveExtractor,
+        password: any PasswordProvider,
+        conflicts: any ConflictResolver
+    ) {
+        guard !isBusy else { return }
+        anchorURL = archiveURL
+        log.append("Post-processing (\(ruleName)): extracting \(archiveURL.lastPathComponent).")
+        requestExtract(
+            using: extractor, password: password, conflicts: conflicts, preservingHistory: true)
     }
 
     /// Runs the extractor against the opened archive, minting fresh security-scoped bookmarks.
     private func startExtractFromAnchor(
         using extractor: any ArchiveExtractor,
         password: any PasswordProvider,
-        conflicts: any ConflictResolver
+        conflicts: any ConflictResolver,
+        preservingHistory: Bool = false
     ) {
         guard let anchorURL else { return }
         var route = SessionRoute(mode: .extractArchive)
-        route.anchorBookmark = try? ScopedAccess.bookmark(for: anchorURL)
-        route.folderBookmark = folderGrantBookmark()
-        startExtract(route, using: extractor, password: password, conflicts: conflicts)
+        mintBookmarks(into: &route, anchor: anchorURL)
+        startExtract(
+            route, using: extractor, password: password, conflicts: conflicts,
+            preservingHistory: preservingHistory)
     }
 
     /// Surface an open/restore failure that happens before any parse can run (e.g. a restored
@@ -206,6 +261,11 @@ public final class OperationSession {
     public func reportOpenFailure(_ message: String) {
         docStatus = .notValid
         log.append(message)
+    }
+
+    /// Appends an informational line to the output pane (post-process decisions, etc.).
+    public func note(_ line: String) {
+        log.append(line)
     }
 
     /// A restored extraction window: surface what it was showing, but never re-extract
@@ -271,8 +331,10 @@ public final class OperationSession {
         let action = pendingGrantAction
         pendingGrantAction = nil
         switch action {
-        case .extract(let extractor, let password, let conflicts):
-            startExtractFromAnchor(using: extractor, password: password, conflicts: conflicts)
+        case .extract(let extractor, let password, let conflicts, let preservingHistory):
+            startExtractFromAnchor(
+                using: extractor, password: password, conflicts: conflicts,
+                preservingHistory: preservingHistory)
         case .verify(let autoRepair):
             startVerify(using: engine, autoRepair: autoRepair)
         case nil:
@@ -404,13 +466,17 @@ public final class OperationSession {
     }
 
     /// `keepingDocument` preserves the parsed set, header, and anchor across an engine run
-    /// (the engine re-emits the roster; the document identity does not change).
-    private func reset(keepingDocument: Bool = false) {
+    /// (the engine re-emits the roster; the document identity does not change). `keepingLog`
+    /// carries the output pane across a CHAINED operation (verify → post-process extraction)
+    /// so the user sees the whole pipeline's history. (ROADMAP Phase 5)
+    private func reset(keepingDocument: Bool = false, keepingLog: Bool = false) {
         rows.removeAll(keepingCapacity: true)
         indexByID.removeAll(keepingCapacity: true)
         docStatus = .waitingToStart
         progress = 0
-        log.removeAll(keepingCapacity: true)
+        if !keepingLog {
+            log.removeAll(keepingCapacity: true)
+        }
         placedURL = nil
         lastError = nil
         if !keepingDocument {
@@ -499,6 +565,11 @@ public final class OperationSession {
                 // clear in the SAME main-actor job that published the error (the post-consume
                 // setBusy(false) is a backstop that runs a suspension point later).
                 setBusy(false)
+                // A green verify/repair end is the post-processing trigger (ROADMAP Phase 5).
+                // Extraction runs never bump it — a chained extraction must not re-chain.
+                if case .success = result, runKind == .verifyRepair, docStatus.isGreenEndState {
+                    postProcessReady += 1
+                }
             }
         }
     }

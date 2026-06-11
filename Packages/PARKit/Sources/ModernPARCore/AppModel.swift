@@ -12,10 +12,27 @@ public final class AppModel {
     public var settings: Settings
     public var recents: RecentsStore
     public var par2Engine: any PAR2Engine
-    /// The archive extractor (RARExtractor from ArchiveKit in the app; nil where extraction
-    /// is unavailable, e.g. previews). Injected behind the protocol so Core/UI stay C++-free.
+    /// The RAR extractor (RARExtractor from ArchiveKit in the app; nil where extraction is
+    /// unavailable, e.g. previews). Injected behind the protocol so Core/UI stay C++-free.
     /// (ARCHITECTURE.md §2; ROADMAP Phase 4)
     public var archiveExtractor: (any ArchiveExtractor)?
+    /// The zip extractor (ZipExtractor via system libarchive; ROADMAP Phase 5).
+    public var zipExtractor: (any ArchiveExtractor)?
+
+    /// The extractor for a post-processing rule's action.
+    public func extractor(for action: PostProcessRule.Action) -> (any ArchiveExtractor)? {
+        switch action {
+        case .builtInUnrar: return archiveExtractor
+        case .builtInUnzip: return zipExtractor
+        }
+    }
+
+    /// The extractor that handles this archive URL's type (drop/open routing).
+    public func extractor(forArchiveAt url: URL) -> (any ArchiveExtractor)? {
+        if ArchiveFileTypes.isRARArchive(url) { return archiveExtractor }
+        if ArchiveFileTypes.isZipArchive(url) { return zipExtractor }
+        return nil
+    }
 
     /// Routes created by a user action DURING THIS LAUNCH. Only these auto-run the
     /// open → verify → repair loop; windows restored by the system re-carry their persisted
@@ -25,22 +42,24 @@ public final class AppModel {
     public init(
         par2Engine: any PAR2Engine,
         archiveExtractor: (any ArchiveExtractor)? = nil,
+        zipExtractor: (any ArchiveExtractor)? = nil,
         settings: Settings = Settings(),
         recents: RecentsStore = RecentsStore()
     ) {
         self.par2Engine = par2Engine
         self.archiveExtractor = archiveExtractor
+        self.zipExtractor = zipExtractor
         self.settings = settings
         self.recents = recents
     }
 
     /// Builds the route for a user-opened file or folder, minting the security-scoped
-    /// bookmarks immediately (dropped/dock URLs lose their grant otherwise). RAR archives
+    /// bookmarks immediately (dropped/dock URLs lose their grant otherwise). Archives
     /// route to the extraction flow; everything else to verify/repair.
     public func makeRoute(opening url: URL) -> SessionRoute {
         let isDirectory =
             (try? url.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == true
-        if !isDirectory, ArchiveFileTypes.isRARArchive(url) {
+        if !isDirectory, ArchiveFileTypes.isArchive(url) {
             return makeRoute(extracting: url)
         }
         var route = SessionRoute(mode: .verifyRepair, autoRepair: settings.autoRepair)

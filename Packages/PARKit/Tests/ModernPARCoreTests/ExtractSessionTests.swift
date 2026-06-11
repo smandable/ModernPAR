@@ -177,6 +177,83 @@ struct ExtractSessionTests {
         #expect(session.docStatus == .waitingToStart)
     }
 
+    /// A canned PAR2 "engine" ending in the given green state — drives the chain trigger.
+    struct GreenVerifyEngine: PAR2Engine {
+        var endState: DocStatus = .allFilesOK
+
+        func run(_ route: SessionRoute) -> AsyncStream<EngineEvent> {
+            AsyncStream { continuation in
+                continuation.yield(.docStatusChanged(.checking))
+                continuation.yield(.docStatusChanged(endState))
+                continuation.yield(.finished(.success(OperationSummary())))
+                continuation.finish()
+            }
+        }
+    }
+
+    @Test func greenVerifyBumpsThePostProcessTrigger() async throws {
+        let session = OperationSession()
+        #expect(session.postProcessReady == 0)
+        session.start(SessionRoute(mode: .verifyRepair), engine: GreenVerifyEngine())
+        await drain(session)
+        #expect(session.postProcessReady == 1)
+        // A second green verify bumps again (each success may chain once).
+        session.start(SessionRoute(mode: .verifyRepair), engine: GreenVerifyEngine())
+        await drain(session)
+        #expect(session.postProcessReady == 2)
+    }
+
+    @Test func extractionGreenEndDoesNotReFireThePostProcessTrigger() async throws {
+        let session = await run([
+            .docStatusChanged(.extracting),
+            .docStatusChanged(.extractedSuccessfully),
+            .finished(.success(OperationSummary())),
+        ])
+        #expect(session.postProcessReady == 0, "a chained extraction must never re-chain")
+    }
+
+    @Test func failedVerifyDoesNotFireThePostProcessTrigger() async throws {
+        struct RedVerifyEngine: PAR2Engine {
+            func run(_ route: SessionRoute) -> AsyncStream<EngineEvent> {
+                AsyncStream { continuation in
+                    continuation.yield(.docStatusChanged(.checking))
+                    continuation.yield(.docStatusChanged(.needMoreRecovery(blocks: 3)))
+                    continuation.yield(
+                        .finished(.success(OperationSummary(repaired: 0, stillMissing: 1))))
+                    continuation.finish()
+                }
+            }
+        }
+        let session = OperationSession()
+        session.start(SessionRoute(mode: .verifyRepair), engine: RedVerifyEngine())
+        await drain(session)
+        #expect(session.postProcessReady == 0)
+    }
+
+    @Test func chainingIntoAnArchivePreservesTheLogAndMovesTheAnchor() async throws {
+        let session = OperationSession()
+        session.start(SessionRoute(mode: .verifyRepair), engine: GreenVerifyEngine())
+        await drain(session)
+        session.note("verify history line")
+
+        let archive = URL(fileURLWithPath: "/tmp/payload.rar")
+        session.chainIntoArchive(
+            archive, ruleName: "Built-in Unrar",
+            using: FakeExtractor(events: [
+                .docStatusChanged(.extracting),
+                .docStatusChanged(.extractedSuccessfully),
+                .finished(.success(OperationSummary())),
+            ]),
+            password: NoPassword(), conflicts: CancelConflicts())
+        await drain(session)
+
+        #expect(session.anchorURL == archive)
+        #expect(session.log.contains("verify history line"), "chained run must keep the log")
+        #expect(session.log.contains { $0.contains("Post-processing (Built-in Unrar)") })
+        #expect(session.docStatus == .extractedSuccessfully)
+        #expect(session.postProcessReady == 1, "the chained extraction must not re-bump")
+    }
+
     @Test func rarFileTypeRoutingMatchesVolumeNaming() {
         #expect(ArchiveFileTypes.isRARArchive(URL(fileURLWithPath: "/x/a.rar")))
         #expect(ArchiveFileTypes.isRARArchive(URL(fileURLWithPath: "/x/a.RAR")))

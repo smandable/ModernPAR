@@ -66,6 +66,12 @@ public struct SetWindow: View {
             guard error == .badPassword, !session.isBusy else { return }
             startExtraction(retryAfterFailure: true)
         }
+        .onChange(of: session.postProcessReady) { _, generation in
+            // A verify/repair just ended green: chain into the first matching rule —
+            // the hands-off MacPAR/SABnzbd pipeline. (ROADMAP Phase 5)
+            guard generation > 0, model.settings.autoPostProcess else { return }
+            PostProcessor.apply(session: session, model: model, manual: false)
+        }
         .onDisappear {
             // Closing the document cancels its operation (the original's behavior) and frees
             // the quit gate; the engine unwinds cooperatively in the background.
@@ -129,19 +135,17 @@ public struct SetWindow: View {
     /// wins over the route mode: window content can change after creation (a PAR set opened
     /// into a Cmd-U window must get Verify/Repair back, and vice versa).
     private var isArchiveSession: Bool {
-        if let anchor = session.anchorURL { return ArchiveFileTypes.isRARArchive(anchor) }
+        if let anchor = session.anchorURL { return ArchiveFileTypes.isArchive(anchor) }
         return route?.mode == .extractArchive
     }
 
-    /// A user-initiated open (drop, Open button, Cmd-O window): RAR archives go to the
-    /// extraction flow; PAR files parse, then auto-verify — the MacPAR open → verify →
+    /// A user-initiated open (drop, Open button, Cmd-O window): archives (.rar/.zip) go to
+    /// the extraction flow; PAR files parse, then auto-verify — the MacPAR open → verify →
     /// repair loop.
     private func openUserInitiated(_ url: URL) {
         let isDirectory =
             (try? url.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == true
-        if !isDirectory, ArchiveFileTypes.isRARArchive(url),
-            let extractor = model.archiveExtractor
-        {
+        if !isDirectory, let extractor = model.extractor(forArchiveAt: url) {
             session.openArchive(
                 url, using: extractor,
                 password: UIPasswordProvider(), conflicts: UIConflictResolver())
@@ -153,11 +157,16 @@ public struct SetWindow: View {
 
     /// Starts (or restarts) extraction of the opened archive. (ROADMAP Phase 4)
     private func startExtraction(retryAfterFailure: Bool = false) {
-        guard let extractor = model.archiveExtractor else { return }
+        guard let anchor = session.anchorURL,
+            let extractor = model.extractor(forArchiveAt: anchor)
+        else { return }
         session.requestExtract(
             using: extractor,
             password: UIPasswordProvider(previousAttemptFailed: retryAfterFailure),
-            conflicts: UIConflictResolver())
+            conflicts: UIConflictResolver(),
+            // A wrong-password retry is a continuation of the same operation — keep the log
+            // (including a chained post-process's verify history). (Phase 5 review)
+            preservingHistory: retryAfterFailure)
     }
 
     /// Windows arriving with a route (Cmd-O, Cmd-U, Finder open, dock drop — or system
@@ -177,7 +186,7 @@ public struct SetWindow: View {
         }
         let isFresh = model.consumeFreshness(of: route.id)
         if route.mode == .extractArchive {
-            guard let extractor = model.archiveExtractor else { return }
+            guard let extractor = model.extractor(forArchiveAt: resolved.url) else { return }
             if isFresh {
                 session.openArchive(
                     resolved.url, using: extractor,

@@ -247,6 +247,28 @@ These are the load-bearing calls that the phases below assume. Each resolves a r
 
 **Goal.** Reproduce the SABnzbd/NZBGet pipeline: a successful verify/repair chains into extraction automatically.
 
+> **Status: DONE (2026-06-11). ★ THE MVP SHIP LINE — a user can now retire Rosetta for the
+> entire consume path.** `CLibArchive` header-bridges the SYSTEM libarchive (vendored 3.7.4
+> headers + `.linkedLibrary("archive")`, `_Static_assert` version pin, version-skew rule in
+> VENDORED.txt — no `.Cxx` interop, like the rest of the project). `ArchiveKit.ZipExtractor`
+> drives libarchive's streaming read + secure write-disk loop (ZipCrypto + WinZip AES,
+> Zip64, store/deflate/LZMA/ZSTD), sharing the Phase 4 staging/placement/conflict/password
+> machinery (refactored into `ExtractPlacement`); two-layer path safety (name sanitization +
+> SECURE_SYMLINKS/NODOTDOT with realpath-resolved staging), unsafe-symlink skipping matching
+> the RAR engine, prompt-once passwords, keep-broken honored. `PostProcessRules`
+> (fnmatch, first-match-wins, one-per-set; built-ins .rar→Unrar, .zip→Unzip) + a verify/repair
+> green end-state chains into extracting the matched payload WITHIN the same window
+> (`postProcessReady` trigger + `OperationSession.chainIntoArchive`, log preserved); a chained
+> extraction's own green end never re-fires the chain. UI: auto post-process toggle (default
+> on, `AutoPostProcess`), Operation ▸ Apply Rule for the manual path, .zip routed from
+> Cmd-U/Open/drop, notification with Show in Finder. libarchive is NEVER in the RAR path; no
+> CLI is ever spawned. The end-to-end milestone (create a set over a .rar AND a .zip payload →
+> open → verify → auto-extract) is a real-engine test. 177 tests green; the 21-agent
+> adversarial review confirmed 15 findings (2 high: silent zip data loss on damaged-tail
+> streaming archives; auto-chain dying under the sandbox on second launch) — all fixed with
+> regression tests. The rule editor, "extract to" picker, and non-default rule reordering are
+> Phase 7.
+
 **Tasks.**
 - `PostProcessRules` data model (filename-pattern match, first-match-wins, one fires per set). Two default rules for MVP: `.rar` → built-in `UnrarEngine`; `.zip` → macOS libarchive (BSD, via `libarchive.2.tbd`). **Drop StuffIt** entirely.
 - Pipeline glue: on verify/repair success, the `OperationSession` chains into the matched post-process operation within the same session (the operation *chains into* another operation).

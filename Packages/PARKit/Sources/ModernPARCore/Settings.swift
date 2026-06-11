@@ -24,5 +24,12 @@ public final class Settings {
 
     nonisolated public static let keepBrokenKey = "unrar.keepBrokenFiles"
 
+    /// "Automatically post-process files after repair" (doc-01 §5.5 `AutoPostProcess`): a
+    /// successful verify/repair chains into the first matching rule — the SABnzbd/NZBGet
+    /// pipeline. Off = trigger manually via Operation ▸ Apply Rule. (ROADMAP Phase 5)
+    public var autoPostProcess: Bool = true
+    /// Ordered post-processing rules; the editor arrives in Phase 7.
+    public var postProcessRules: PostProcessRules = .standard
+
     public init() {}
 }

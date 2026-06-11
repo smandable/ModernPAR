@@ -188,7 +188,9 @@ target directly hurts testability.
        │    vendors unrarsrc 7.2.4 (3 local patches — vendor/VENDORED.txt);
        │    unrarshim.{h,cpp} catches all C++ exceptions, exposes
        │    POD + const char* + callback fn-ptrs only; EXTRACTION/LISTING ONLY
-       └─ depends on ▶ CLibArchive (system target → libarchive.2.tbd + headers; Phase 5)
+       └─ depends on ▶ CLibArchive (C header-bridge target: vendored 3.7.4 headers +
+            .linkedLibrary("archive") → the SYSTEM libarchive; Phase 5, VENDORED.txt
+            has the version-skew rule)
 ```
 
 ### Target responsibilities
@@ -202,7 +204,7 @@ target directly hurts testability.
 | **Par2Cxx** *(Phase 2)* | C++ | Vendors par2cmdline-turbo v1.4.0 `src/` + committed `arm64-apple` `config.h`; `Par2Shim.{h,cpp}` catches **all** C++ exceptions, exposes POD/`const char*`/fn-ptr C ABI only. | (C++ contained here) |
 | **ArchiveKit** *(Phase 4)* | Swift | `RARExtractor` (`ZipExtractor` in Phase 5); password/volume/destination/placement logic in Swift around the shims. | **No** (`CUnrar`'s umbrella header is `extern "C"`) |
 | **CUnrar** *(Phase 4)* | C++ | Vendors `unrarsrc` 7.2.4 (3 local patches, `vendor/VENDORED.txt`); `unrarshim.{h,cpp}` catches all C++ exceptions, exposes a C-only extraction/listing API (no creation — UnRAR license). | (C++ contained here) |
-| **CLibArchive** | C (systemLibrary) | Module map over `libarchive.2.tbd` + vendored headers. | n/a |
+| **CLibArchive** *(Phase 5)* | C | Header bridge to the SYSTEM libarchive: vendored `archive.h`/`archive_entry.h` (3.7.4, version-pinned by `_Static_assert`) + `.linkedLibrary("archive")`. Only long-stable APIs may be used (version-skew rule in `VENDORED.txt`). | n/a |
 
 **Quarantine rule (07 Claim 4) — superseded by a stricter as-built outcome (Phase 4):** the
 planned mitigation assumed ArchiveKit would need `.interoperabilityMode(.Cxx)` (whose propagation
