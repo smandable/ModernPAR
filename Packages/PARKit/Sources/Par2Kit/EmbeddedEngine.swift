@@ -11,13 +11,11 @@ import Par2Cxx
 /// Cancelling the consuming task (Cmd-.) trips the cancel token, the shim's next output poll
 /// throws inside the engine, and the run unwinds cooperatively.
 ///
-/// All embedded runs are SERIALIZED on one queue: a cancelled run keeps the engine briefly
-/// while it unwinds, and a follow-up verify/repair must never overlap it on the same files.
+/// All engine runs are SERIALIZED (`EngineRunSupport.serialQueue`): a cancelled run keeps the
+/// engine briefly while it unwinds, and a follow-up must never overlap it on the same files.
 public final class EmbeddedEngine: PAR2Engine, Sendable {
-    private static let executionQueue = DispatchQueue(
-        label: "org.modernpar.embedded-engine", qos: .userInitiated)
-    /// Repair automatically when verify finds repairable damage (the MacPAR loop). Verify-only
-    /// runs (e.g. restored windows, where auto-repair must not fire without consent) pass false.
+    /// Engine-level master switch ANDed with `route.autoRepair`. Verify-only callers (e.g.
+    /// restored windows, where auto-repair must not fire without consent) use the route flag.
     private let repairsAutomatically: Bool
     /// Engine thread count; 0 = automatic (turbo's default). Wired to the "limit CPU cores"
     /// preference in Phase 7.
@@ -29,17 +27,17 @@ public final class EmbeddedEngine: PAR2Engine, Sendable {
     }
 
     public func run(_ route: SessionRoute) -> AsyncStream<EngineEvent> {
-        let repairs = repairsAutomatically
+        let repairs = repairsAutomatically && route.autoRepair
         let threads = threadCount
         return AsyncStream { continuation in
             let token = CancelToken()
             continuation.onTermination = { _ in token.cancel() }
-            Task.detached(priority: .userInitiated) {
-                Self.executionQueue.sync {
-                    Self.execute(
-                        route: route, repairs: repairs, threads: threads,
-                        token: token, continuation: continuation)
-                }
+            // Straight onto the serial queue — wrapping in Task.detached + queue.sync would
+            // pin a width-limited Swift Concurrency pool thread for the whole run.
+            EngineRunSupport.serialQueue.async {
+                Self.execute(
+                    route: route, repairs: repairs, threads: threads,
+                    token: token, continuation: continuation)
                 continuation.finish()
             }
         }
@@ -58,51 +56,18 @@ public final class EmbeddedEngine: PAR2Engine, Sendable {
             continuation.yield(.finished(.failure(.notImplemented)))
             return
         }
-
-        // Bracket the whole run in the folder grant (repair writes into the folder), then
-        // resolve the anchor .par2. (ARCHITECTURE.md §5.2)
-        let folderScope = route.folderBookmark.flatMap { try? ScopedAccess.resolve($0) }
-        defer {
-            if folderScope?.didStart == true {
-                folderScope?.url.stopAccessingSecurityScopedResource()
-            }
-        }
-        let anchorScope = route.anchorBookmark.flatMap { try? ScopedAccess.resolve($0) }
-        defer {
-            if anchorScope?.didStart == true {
-                anchorScope?.url.stopAccessingSecurityScopedResource()
-            }
-        }
-        guard let anchor = anchorScope?.url else {
+        let scopes = EngineRunSupport.beginScopes(for: route)
+        defer { scopes.end() }
+        guard let anchor = scopes.anchor else {
             continuation.yield(
                 .finished(.failure(.launchFailed("session has no .par2 anchor bookmark"))))
             return
         }
 
-        // The native parser is the model; the engine is the actuator. Paint the roster first
-        // so the UI has rows before the first engine line arrives. (ARCHITECTURE.md §1.3)
-        var fileIDsByName: [String: UUID] = [:]
-        if let set = try? Par2Parser.loadSet(anchor: anchor) {
-            let parSet = ParSet(par2: set)
-            continuation.yield(.scanningStarted(totalFiles: parSet.files.count))
-            continuation.yield(.filesDiscovered(parSet.files))
-            fileIDsByName = Self.rosterNames(for: set)
-        } else {
-            continuation.yield(.scanningStarted(totalFiles: 0))
-        }
+        let fileIDsByName = EngineRunSupport.paintRoster(anchor: anchor, continuation: continuation)
         continuation.yield(.docStatusChanged(.checking))
-
-        // Sandbox heads-up: with only a single-file grant the engine cannot read the sibling
-        // data files and would report everything missing. (Folder powerbox flow = Phase 3.)
-        if route.folderBookmark == nil,
-            !FileManager.default.isReadableFile(
-                atPath: anchor.deletingLastPathComponent().path)
-        {
-            continuation.yield(
-                .logLine(
-                    "[err] ModernPAR may not have permission to read the set's folder — open the enclosing folder (not just the .par2) and verify again."
-                ))
-        }
+        EngineRunSupport.warnIfFolderUnreadable(
+            route: route, anchor: anchor, continuation: continuation)
 
         let bridge = LineBridge(
             parser: TurboOutputParser(fileIDsByName: fileIDsByName, repairsAutomatically: repairs),
@@ -110,80 +75,11 @@ public final class EmbeddedEngine: PAR2Engine, Sendable {
         let result = Self.shimRepair(
             anchor: anchor, repair: repairs, threads: threads, token: token, bridge: bridge)
 
-        switch result {
-        case PAR2SHIM_SUCCESS:
-            continuation.yield(
-                .finished(.success(OperationSummary(repaired: bridge.repairedCount))))
-        case PAR2SHIM_REPAIR_POSSIBLE:
-            // Verify-only run on a repairable set: damage found, nothing repaired yet.
-            continuation.yield(
-                .finished(.success(OperationSummary(stillMissing: bridge.recoverableCount))))
-        case PAR2SHIM_REPAIR_NOT_POSSIBLE:
-            continuation.yield(
-                .finished(.success(OperationSummary(stillMissing: bridge.unrecoverableCount))))
-        case PAR2SHIM_CANCELLED:
-            continuation.yield(.finished(.failure(.cancelled)))
-        case PAR2SHIM_REPAIR_FAILED:
-            // The parser settled rows and doc status from "Repair Failed."; surface the result.
-            continuation.yield(
-                .finished(
-                    .failure(
-                        .engine(
-                            code: Int32(result.rawValue),
-                            message: "repair completed but files are still damaged"))))
-        default:
-            continuation.yield(.docStatusChanged(.internalError))
-            continuation.yield(
-                .finished(
-                    .failure(.engine(code: Int32(result.rawValue), message: "par2 engine failed")))
-            )
-        }
-    }
-
-    /// Builds the roster map keyed by the names the ENGINE will print: the Description-packet
-    /// (ASCII-field) name passed through the engine's par2→local translation — on macOS,
-    /// backslashes become '/' and control bytes become %XX (descriptionpacket.cpp,
-    /// TranslateFilenameFromPar2ToLocal at nlNormal). The display (Unicode) name is also
-    /// mapped as a fallback. Ambiguous names (two files translating to one string) are
-    /// dropped entirely so no row receives another file's events.
-    static func rosterNames(for set: Par2RecoverySet) -> [String: UUID] {
-        var map: [String: UUID] = [:]
-        var ambiguous: Set<String> = []
-        func insert(_ name: String, _ id: UUID) {
-            if let existing = map[name], existing != id {
-                ambiguous.insert(name)
-            } else {
-                map[name] = id
-            }
-        }
-        for id in set.recoveryFileIDs + set.nonRecoveryFileIDs {
-            guard let description = set.descriptions[id] else { continue }
-            insert(Self.engineDisplayName(for: description.asciiName), description.fileID.uuid)
-            insert(description.preferredName, description.fileID.uuid)
-        }
-        for name in ambiguous {
-            map.removeValue(forKey: name)
-        }
-        return map
-    }
-
-    /// Mirrors `DescriptionPacket::TranslateFilenameFromPar2ToLocal` for macOS at nlNormal:
-    /// '\' → '/', bytes < 32 → "%XX" (uppercase hex), everything else unchanged.
-    static func engineDisplayName(for asciiName: String) -> String {
-        var bytes: [UInt8] = []
-        bytes.reserveCapacity(asciiName.utf8.count)
-        for byte in asciiName.utf8 {
-            if byte < 32 {
-                bytes.append(UInt8(ascii: "%"))
-                let hex = String(format: "%02X", byte)
-                bytes.append(contentsOf: Array(hex.utf8))
-            } else if byte == UInt8(ascii: "\\") {
-                bytes.append(UInt8(ascii: "/"))
-            } else {
-                bytes.append(byte)
-            }
-        }
-        return String(decoding: bytes, as: UTF8.self)
+        EngineRunSupport.finish(
+            code: Int32(result.rawValue),
+            wasCancelled: result == PAR2SHIM_CANCELLED,
+            bridge: bridge,
+            continuation: continuation)
     }
 
     private static func shimRepair(
@@ -191,7 +87,7 @@ public final class EmbeddedEngine: PAR2Engine, Sendable {
     ) -> Par2ShimResult {
         let bridgeContext = Unmanaged.passUnretained(bridge).toOpaque()
         let tokenContext = Unmanaged.passUnretained(token).toOpaque()
-        let extras = extraFiles(near: anchor)
+        let extras = EngineRunSupport.extraFiles(near: anchor)
         var argv: [UnsafePointer<CChar>?] = extras.map { UnsafePointer(strdup($0.path)) }
         defer {
             for pointer in argv { free(UnsafeMutablePointer(mutating: pointer)) }
@@ -220,25 +116,6 @@ public final class EmbeddedEngine: PAR2Engine, Sendable {
                 tokenContext
             )
         }
-    }
-
-    /// The folder's data files, handed to the engine as extra files to scan — the equivalent
-    /// of `par2 r set.par2 *`. This is what powers misnamed/renamed-data detection, including
-    /// the engine's own `name.N` backups left by an interrupted repair. PAR metadata files
-    /// are excluded (the engine loads those itself).
-    private static func extraFiles(near anchor: URL) -> [URL] {
-        guard
-            let entries = try? FileManager.default.contentsOfDirectory(
-                at: anchor.deletingLastPathComponent(),
-                includingPropertiesForKeys: [.isRegularFileKey])
-        else { return [] }
-        return entries.filter { url in
-            guard
-                (try? url.resourceValues(forKeys: [.isRegularFileKey]))?.isRegularFile == true
-            else { return false }
-            let ext = url.pathExtension.lowercased()
-            return ext != "par2" && ext != "par"
-        }.sorted { $0.lastPathComponent < $1.lastPathComponent }
     }
 }
 

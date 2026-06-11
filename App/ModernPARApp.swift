@@ -17,13 +17,16 @@ struct ModernPARApp: App {
 
     var body: some Scene {
         WindowGroup(for: SessionRoute.self) { $route in
+            // Finder open-with / dock-drop routing lives inside SetWindow (OpenFilesClaimant):
+            // a pristine window claims the first opened URL itself, so launching the app by
+            // double-clicking a .par2 doesn't leave an extra empty window behind.
             SetWindow(route: route)
                 .environment(model)
         } defaultValue: {
             SessionRoute(mode: .verifyRepair)
         }
         .handlesExternalEvents(matching: ["modernpar"])
-        .commands { ModernPARCommands() }
+        .commands { ModernPARCommands(model: model) }
 
         Settings {
             SettingsView()

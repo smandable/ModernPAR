@@ -18,6 +18,11 @@ public final class OperationSession {
     /// The parsed set powering the header line — produced by the native read-only parser the
     /// moment a set is opened, before any engine runs. (ARCHITECTURE.md §1.3)
     public private(set) var parSet: ParSet?
+    /// Set when an auto-verify wants to run but engine I/O needs a folder grant the session
+    /// doesn't have — the UI presents the one-time powerbox panel and calls
+    /// `folderGrantResolved`/`folderGrantDeclined`. (ROADMAP Phase 3)
+    public private(set) var awaitingFolderGrant = false
+    private var pendingVerifyAutoRepair: Bool?
     /// What the user opened (file or folder) and the `.par2`/`.par` it anchored to — kept so
     /// Verify can hand the engine a route with fresh security-scoped bookmarks.
     public private(set) var openedURL: URL?
@@ -32,29 +37,51 @@ public final class OperationSession {
     public func start(_ route: SessionRoute, engine: any PAR2Engine) {
         cancel()
         reset(keepingDocument: true)
-        isBusy = true
+        setBusy(true)
         let stream = engine.run(route)
         task = Task { [weak self] in
             await self?.consume(stream)
             // A superseded run must not clobber the replacing run's state.
             guard !Task.isCancelled else { return }
-            self?.isBusy = false
+            self?.setBusy(false)
         }
     }
 
     /// Runs the engine against whatever `open(_:)` loaded, minting fresh security-scoped
-    /// bookmarks for the route. The Phase 2 bridge from "set on screen" to "real verify";
-    /// Phase 3 adds auto-verify and the folder-grant powerbox flow.
-    public func startVerify(using engine: any PAR2Engine) {
+    /// bookmarks for the route. `autoRepair: false` is the awaiting-consent path (restored
+    /// windows; explicit "Verify" runs) — the engine then stops at the verdict.
+    public func startVerify(using engine: any PAR2Engine, autoRepair: Bool = true) {
         guard let anchorURL else { return }
-        var route = SessionRoute(mode: .verifyRepair)
+        var route = SessionRoute(mode: .verifyRepair, autoRepair: autoRepair)
         route.anchorBookmark = try? ScopedAccess.bookmark(for: anchorURL)
+        route.folderBookmark = folderGrantBookmark()
+        start(route, engine: engine)
+    }
+
+    /// The best available folder grant for engine I/O: the opened folder itself, or a
+    /// previously remembered powerbox grant covering the anchor's folder. (ROADMAP Phase 3)
+    private func folderGrantBookmark() -> Data? {
         if let openedURL,
             (try? openedURL.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == true
         {
-            route.folderBookmark = try? ScopedAccess.bookmark(for: openedURL)
+            return try? ScopedAccess.bookmark(for: openedURL)
         }
-        start(route, engine: engine)
+        guard let anchorURL else { return nil }
+        return FolderAccessStore.bookmark(forFolder: anchorURL.deletingLastPathComponent())
+    }
+
+    /// Whether engine I/O would need a folder grant the session does not have — the trigger
+    /// for the one-time "grant this folder" powerbox flow in the UI.
+    public var needsFolderGrant: Bool {
+        guard let anchorURL else { return false }
+        if let openedURL,
+            (try? openedURL.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == true
+        {
+            return false
+        }
+        let folder = anchorURL.deletingLastPathComponent()
+        if FolderAccessStore.bookmark(forFolder: folder) != nil { return false }
+        return !FileManager.default.isReadableFile(atPath: folder.path)
     }
 
     public func cancel() {
@@ -63,20 +90,52 @@ public final class OperationSession {
         // The cancelled task's completion is discarded (`!Task.isCancelled` guard), so terminal
         // state must be restored here — otherwise the spinner sticks at busy/checking forever.
         if isBusy {
-            isBusy = false
-            if docStatus == .checking { docStatus = .waitingToStart }
+            setBusy(false)
+            if docStatus == .checking || docStatus == .repairing {
+                docStatus = .waitingToStart
+            }
         }
     }
 
-    // MARK: - Opening a set (Phase 1: native parse, no engine)
+    /// The grant-aware verify entry point — menus, toolbar, and the open-chain all route
+    /// through here so the one-time folder-grant flow can never be bypassed. (ROADMAP Phase 3)
+    public func requestVerify(using engine: any PAR2Engine, autoRepair: Bool) {
+        guard anchorURL != nil, !isBusy else { return }
+        if needsFolderGrant {
+            pendingVerifyAutoRepair = autoRepair
+            awaitingFolderGrant = true
+        } else {
+            startVerify(using: engine, autoRepair: autoRepair)
+        }
+    }
+
+    /// Surface an open/restore failure that happens before any parse can run (e.g. a restored
+    /// window whose bookmark no longer resolves).
+    public func reportOpenFailure(_ message: String) {
+        docStatus = .notValid
+        log.append(message)
+    }
+
+    private func setBusy(_ busy: Bool) {
+        isBusy = busy
+        OperationRegistry.shared.setBusy(busy, session: self)
+    }
+
+    // MARK: - Opening a set (native parse, then optional auto-verify)
 
     /// Opens a `.par2` / `.par` / `.pNN` file — or a folder containing one — and populates the
-    /// file table and header from the native read-only parser. Verification is a separate,
-    /// user-initiated step (auto-verify arrives with the engine in Phases 2–3).
-    public func open(_ url: URL) {
+    /// file table and header from the native read-only parser. When `thenVerifyUsing` is given
+    /// (fresh user-initiated opens), a verify chains automatically after a successful parse —
+    /// the MacPAR open → verify → repair loop. Restored windows pass nil: they must never
+    /// auto-fire a destructive repair without consent. (ROADMAP Phase 3)
+    public func open(
+        _ url: URL,
+        thenVerifyUsing engine: (any PAR2Engine)? = nil,
+        autoRepair: Bool = true
+    ) {
         cancel()
         reset()
-        isBusy = true
+        setBusy(true)
         docStatus = .checking
         task = Task { [weak self] in
             let outcome = await Self.parse(url: url)
@@ -92,8 +151,33 @@ public final class OperationSession {
                 uniquingKeysWith: { first, _ in first })
             self.log.append(contentsOf: outcome.logLines)
             self.docStatus = outcome.docStatus
-            self.isBusy = false
+            self.setBusy(false)
+            if let engine, outcome.parSet != nil, self.parSet?.kind == .par2 {
+                if self.needsFolderGrant {
+                    // The UI presents the one-time "grant this folder" powerbox panel.
+                    self.pendingVerifyAutoRepair = autoRepair
+                    self.awaitingFolderGrant = true
+                } else {
+                    self.startVerify(using: engine, autoRepair: autoRepair)
+                }
+            }
         }
+    }
+
+    /// The folder grant was given (and persisted by the caller); run the deferred verify.
+    public func folderGrantResolved(using engine: any PAR2Engine) {
+        awaitingFolderGrant = false
+        startVerify(using: engine, autoRepair: pendingVerifyAutoRepair ?? true)
+        pendingVerifyAutoRepair = nil
+    }
+
+    /// The user declined the folder grant; stay open in parse-only mode.
+    public func folderGrantDeclined() {
+        awaitingFolderGrant = false
+        pendingVerifyAutoRepair = nil
+        log.append(
+            "Folder access not granted — verify would report every data file as missing. Use the Verify button after granting access, or open the enclosing folder."
+        )
     }
 
     private struct ParseOutcome: Sendable {

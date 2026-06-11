@@ -175,6 +175,31 @@ struct EmbeddedEngineTests {
         #expect(statuses.values.contains(.unrecoverableCorrupt))
     }
 
+    @Test func misnamedFileIsFoundAndRenamedBack() async throws {
+        let dir = try stageFixture()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        // The classic Usenet case: the data is intact but under the wrong name.
+        let proper = dir.appendingPathComponent("file-b.bin")
+        let wrongName = dir.appendingPathComponent("totally-wrong-name.dat")
+        try FileManager.default.moveItem(at: proper, to: wrongName)
+
+        let engine = EmbeddedEngine()
+        let events = await collect(
+            engine.run(try route(anchor: dir.appendingPathComponent("set.par2"), folder: dir)))
+
+        let lastDocStatus = events.compactMap { event -> DocStatus? in
+            if case .docStatusChanged(let status) = event { return status }
+            return nil
+        }.last
+        #expect(lastDocStatus == .restoredWithRenames)
+        let statuses = finalStatuses(in: events)
+        #expect(
+            statuses.values.contains { status in
+                if case .renamed = status { return true } else { return false }
+            })
+        #expect(FileManager.default.fileExists(atPath: proper.path))  // renamed back
+    }
+
     @Test func nonVerifyModesFailCleanly() async throws {
         let engine = EmbeddedEngine()
         let events = await collect(engine.run(SessionRoute(mode: .extractArchive)))

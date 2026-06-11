@@ -9,6 +9,7 @@ struct StatusCatalogTests {
     @Test func iconMappingMatchesTheOriginalCatalog() {
         #expect(FileStatus.ok.icon == .ok)
         #expect(FileStatus.recovered.icon == .ok)
+        #expect(FileStatus.renamed(from: "old").icon == .ok)  // "OK after renaming"
         #expect(FileStatus.recoverableMissing.icon == .recoverable)
         #expect(FileStatus.recoverableCorrupt.icon == .recoverable)
         #expect(FileStatus.possibleError.icon == .recoverable)
@@ -17,7 +18,6 @@ struct StatusCatalogTests {
         #expect(FileStatus.notInSet.icon == .notInVolumeSet)
         #expect(FileStatus.pending.icon == .neutral)
         #expect(FileStatus.checking.icon == .neutral)
-        #expect(FileStatus.renamed(from: "old").icon == .neutral)
     }
 
     @Test func recoverableFlagMatchesTheOriginalDistinction() {

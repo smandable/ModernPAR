@@ -29,6 +29,9 @@ public struct TurboOutputParser {
     public private(set) var unrecoverableCount = 0
     /// Files the repairable verdict covered (damaged + missing at verify time).
     public private(set) var recoverableCount = 0
+    /// Targets whose data was found under another name ("is a match for") — repair renames.
+    public private(set) var renamedCount = 0
+    private var renamedTargets: Set<String> = []
 
     public init(fileIDsByName: [String: UUID], repairsAutomatically: Bool) {
         self.fileIDsByName = fileIDsByName
@@ -44,6 +47,31 @@ public struct TurboOutputParser {
 
         var events: [EngineEvent] = [.logLine(isError ? "[err] \(line)" : line)]
 
+        // `Target: "X" - is a match for "Y".` / `File: "X" - is a match for "Y".` —
+        // target Y's data was found under the name X; repair renames it. (par2repairer.cpp)
+        // Checked before the generic Target-line match: the renamed form also starts with
+        // `Target: "` but must not be parsed as a found/damaged/missing disposition.
+        if let (foundName, target) = matchLine(line) {
+            renamedTargets.insert(target)
+            pendingMissing.remove(target)
+            pendingDamaged.remove(target)
+            // The Target:-variant means the wrong-named file is itself a roster target whose
+            // own slot is rename-satisfied too (the swap case prints one line for both).
+            if line.hasPrefix("Target: "), fileIDsByName[foundName] != nil {
+                renamedTargets.insert(foundName)
+                pendingMissing.remove(foundName)
+                pendingDamaged.remove(foundName)
+                if let id = fileIDsByName[foundName] {
+                    events.append(.fileStatusChanged(id: id, status: renameStatus(from: target)))
+                }
+            }
+            renamedCount = renamedTargets.count
+            if let id = fileIDsByName[target] {
+                events.append(.fileStatusChanged(id: id, status: renameStatus(from: foundName)))
+            }
+            return events
+        }
+
         if let (name, disposition) = Self.targetLine(line) {
             switch disposition {
             case .found:
@@ -57,14 +85,20 @@ public struct TurboOutputParser {
                     }
                 }
             case .damaged:
-                pendingDamaged.insert(name)
-                if let id = fileIDsByName[name] {
-                    events.append(.fileStatusChanged(id: id, status: .checking))
+                // Rename-satisfied targets stay renamed: scan parallelism can deliver the
+                // match line before the donor target's own damaged/missing line.
+                if !renamedTargets.contains(name) {
+                    pendingDamaged.insert(name)
+                    if let id = fileIDsByName[name] {
+                        events.append(.fileStatusChanged(id: id, status: .checking))
+                    }
                 }
             case .missing:
-                pendingMissing.insert(name)
-                if let id = fileIDsByName[name] {
-                    events.append(.fileStatusChanged(id: id, status: .checking))
+                if !renamedTargets.contains(name) {
+                    pendingMissing.insert(name)
+                    if let id = fileIDsByName[name] {
+                        events.append(.fileStatusChanged(id: id, status: .checking))
+                    }
                 }
             }
             return events
@@ -105,7 +139,8 @@ public struct TurboOutputParser {
                 }
             }
             awaitingRepair.removeAll()
-            events.append(.docStatusChanged(.restoredSuccessfully))
+            events.append(
+                .docStatusChanged(renamedCount > 0 ? .restoredWithRenames : .restoredSuccessfully))
         } else if line.hasPrefix("Repair Failed.") {
             // Repair ran but re-verification still found damage (engine result code 5).
             unrecoverableCount = pendingDamaged.count + pendingMissing.count
@@ -121,6 +156,45 @@ public struct TurboOutputParser {
     // MARK: - Line shapes (string contract pinned by TurboOutputParserTests)
 
     private enum TargetDisposition { case found, damaged, missing }
+
+    /// The rename presentation depends on the run mode: with auto-repair the rename happens
+    /// moments later, so "OK after renaming" is honest; a verify-only run leaves the file
+    /// under the wrong name on disk, so the row must stay in a needs-attention state.
+    private func renameStatus(from foundName: String) -> FileStatus {
+        repairsAutomatically ? .renamed(from: foundName) : .possibleError
+    }
+
+    /// `Target: "X" - is a match for "Y".` / `File: "X" - is a match for "Y".`
+    /// Returns (foundName X, targetName Y).
+    ///
+    /// Filenames may legally contain the delimiter (or the line suffix — partial-match lines
+    /// like `…found N data blocks from "b.bin".` share the same shape), so every candidate
+    /// split is tried and accepted only when the target half is a roster name. Garbage
+    /// "targets" from hostile names never are, and those lines fall through to `targetLine`.
+    private func matchLine(_ line: String) -> (String, String)? {
+        let prefix: String
+        if line.hasPrefix("Target: \"") {
+            prefix = "Target: \""
+        } else if line.hasPrefix("File: \"") {
+            prefix = "File: \""
+        } else {
+            return nil
+        }
+        guard line.hasSuffix("\".") else { return nil }
+        let nameStart = line.index(line.startIndex, offsetBy: prefix.count)
+        let nameEnd = line.index(line.endIndex, offsetBy: -2)
+        var searchRange = nameStart..<nameEnd
+        while let delimiter = line.range(
+            of: "\" - is a match for \"", options: .backwards, range: searchRange)
+        {
+            let target = String(line[delimiter.upperBound..<nameEnd])
+            if fileIDsByName[target] != nil {
+                return (String(line[nameStart..<delimiter.lowerBound]), target)
+            }
+            searchRange = nameStart..<delimiter.lowerBound
+        }
+        return nil
+    }
 
     /// `Target: "name" - found.` / `- missing.` / `- damaged...` (par2repairer.cpp).
     /// The delimiter is matched BACKWARDS so filenames containing `" - ` parse correctly.

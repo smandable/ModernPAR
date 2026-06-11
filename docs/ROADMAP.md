@@ -159,6 +159,27 @@ These are the load-bearing calls that the phases below assume. Each resolves a r
 
 **Goal.** Reproduce the core MacPAR loop: open a `.par2` → auto-verify → auto-repair if needed, with live per-file status and cancellation.
 
+> **Status: DONE (2026-06-11), with Phase 2 closed out in the same push.**
+> *Phase 2 completion:* `HelperProcessEngine` implemented over the vendored CLI (built as the
+> `Par2HelperCLI` SPM executable via unity-includes; no source forking) and held to the same
+> protocol-level scenarios as the embedded engine. Hardening from adversarial review: signal
+> deaths are never mapped through the Result table (SIGHUP used to read as "verify success"),
+> SIGTERM→SIGKILL escalation prevents a wedged child from holding the shared engine queue
+> forever, runs go straight onto the serial queue (no pinned Swift-concurrency pool threads),
+> and parent pipe write-ends close after launch (EOF correctness).
+> *Phase 3:* open → auto-verify → auto-repair from drop / Open / Cmd-O / Finder double-click /
+> dock drop (cold-launch opens claim the pristine window — no stray empty window); restored
+> windows re-open parse-only and **never** auto-fire repair (route freshness is consumed once
+> per launch); one-time "grant this folder" powerbox flow with persisted app-scoped bookmarks
+> (grants validated to actually cover the set; ancestors count); renamed-file detection
+> ("is a match for" → "OK after renaming", `.restoredWithRenames`, roster-validated parsing
+> against delimiter-hostile names); quit gating via a weak-tracking `OperationRegistry` +
+> alert; closing a window cancels its run; Cmd-./Verify Only/Repair Again menu commands via
+> focused values; Repair button appears on the awaiting-consent verdict; 32k-row apply-path
+> smoke test. 91 tests green. Remaining for later phases: the `NSTableView` escape hatch is
+> untriggered (no real-set fps measurement yet), and the helper is not yet bundled into the
+> app (Phase 9 fallback-build wiring).
+
 **Tasks.**
 - `SessionWindow` resolves `SessionRoute` bookmarks → URLs, builds `OperationSession`, auto-starts verify (then repair if needed). One `OperationSession` per window owns the running `Task`.
 - **Folder-scope acquisition.** Opening a single `.par2` grants only that file; verify scans the *whole folder*. Implement the one-time "grant this folder" powerbox flow (`fileImporter`/`NSOpenPanel` pre-pointed at the parent), persist an **app-scoped security-scoped bookmark**, and bracket every engine op with `start/stopAccessingSecurityScopedResource()`.

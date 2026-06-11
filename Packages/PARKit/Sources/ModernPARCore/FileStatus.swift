@@ -18,7 +18,8 @@ public enum FileStatus: Sendable, Equatable {
 
     public var icon: StatusIcon {
         switch self {
-        case .ok, .recovered:
+        case .ok, .recovered, .renamed:
+            // .renamed is the original's "OK after renaming" (FileStatus3) — an OK state.
             return .ok
         case .recoverableMissing, .recoverableCorrupt, .possibleError:
             return .recoverable
@@ -26,7 +27,7 @@ public enum FileStatus: Sendable, Equatable {
             return .error
         case .notInSet:
             return .notInVolumeSet
-        case .pending, .checking, .renamed:
+        case .pending, .checking:
             return .neutral
         }
     }

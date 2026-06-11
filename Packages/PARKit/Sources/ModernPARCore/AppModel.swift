@@ -13,6 +13,11 @@ public final class AppModel {
     public var recents: RecentsStore
     public var par2Engine: any PAR2Engine
 
+    /// Routes created by a user action DURING THIS LAUNCH. Only these auto-run the
+    /// open → verify → repair loop; windows restored by the system re-carry their persisted
+    /// route but must never auto-fire a destructive repair without consent. (ROADMAP Phase 3)
+    private var freshRouteIDs: Set<UUID> = []
+
     public init(
         par2Engine: any PAR2Engine,
         settings: Settings = Settings(),
@@ -21,5 +26,25 @@ public final class AppModel {
         self.par2Engine = par2Engine
         self.settings = settings
         self.recents = recents
+    }
+
+    /// Builds a verify/repair route for a user-opened file or folder, minting the
+    /// security-scoped bookmarks immediately (dropped/dock URLs lose their grant otherwise).
+    public func makeRoute(opening url: URL) -> SessionRoute {
+        var route = SessionRoute(mode: .verifyRepair, autoRepair: settings.autoRepair)
+        let isDirectory =
+            (try? url.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == true
+        if isDirectory {
+            route.folderBookmark = try? ScopedAccess.bookmark(for: url)
+        } else {
+            route.anchorBookmark = try? ScopedAccess.bookmark(for: url)
+        }
+        freshRouteIDs.insert(route.id)
+        return route
+    }
+
+    /// True exactly once per launch per route — the auto-run gate.
+    public func consumeFreshness(of routeID: UUID) -> Bool {
+        freshRouteIDs.remove(routeID) != nil
     }
 }

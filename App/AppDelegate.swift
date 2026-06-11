@@ -1,12 +1,27 @@
 import AppKit
+import ModernPARCore
 
-/// Dock-drop / open-with robustness. `onOpenURL` is the primary SwiftUI path, but the first dock
-/// drop is known-flaky, so we keep an `NSApplicationDelegate` bridge for `application(_:open:)`.
-/// (ARCHITECTURE.md §5.3, §8)
+/// AppKit bridges SwiftUI cannot cover: Finder open-with / dock-drop delivery, and blocking
+/// quit while an operation is running. (ARCHITECTURE.md §5.3, §8; ROADMAP Phase 3)
 final class AppDelegate: NSObject, NSApplicationDelegate {
     func application(_ application: NSApplication, open urls: [URL]) {
-        // Phase 2 wires this: round-trip each URL through `ScopedAccess.bookmark`, classify by
-        // extension (.par2/.par/.rar), and `openWindow(value:)` a matching SessionRoute.
-        // Phase 0 is a no-op so the app launches and accepts open-with without crashing.
+        MainActor.assumeIsolated {
+            OpenFilesBroker.deliver(urls)
+        }
+    }
+
+    /// "Quit disabled while any session busy" — a running repair must not be killed mid-write
+    /// without the user insisting. (ROADMAP Phase 3)
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        MainActor.assumeIsolated {
+            guard OperationRegistry.shared.busyCount > 0 else { return .terminateNow }
+            let alert = NSAlert()
+            alert.messageText = "An operation is still running"
+            alert.informativeText =
+                "Quitting now interrupts the running verify/repair. The set can be repaired again later, but quitting mid-repair leaves partially written files."
+            alert.addButton(withTitle: "Cancel")
+            alert.addButton(withTitle: "Quit Anyway")
+            return alert.runModal() == .alertFirstButtonReturn ? .terminateCancel : .terminateNow
+        }
     }
 }

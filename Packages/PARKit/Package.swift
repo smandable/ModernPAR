@@ -62,9 +62,17 @@ let package = Package(
             cSettings: [.headerSearchPath("config")] + par2CxxDefines.map { .define($0) },
             cxxSettings: [.headerSearchPath("config")] + par2CxxDefines.map { .define($0) }
         ),
-        // Swift PAR2 engine layer: MockEngine + (Phase 2) EmbeddedEngine driving Par2Cxx via
-        // the C shim, and HelperProcessEngine (designed-in subprocess fallback / standby
-        // license firewall).
+        // The vendored par2 CLI, built as `par2helper` for the HelperProcessEngine fallback
+        // (and the standby GPL license firewall). Unity-includes the two CLI-only translation
+        // units straight from the pinned vendor tree.
+        .executableTarget(
+            name: "Par2HelperCLI",
+            dependencies: ["Par2Cxx"],
+            cxxSettings: [.headerSearchPath("../Par2Cxx/config")]
+                + par2CxxDefines.map { .define($0) }
+        ),
+        // Swift PAR2 engine layer: MockEngine + EmbeddedEngine (primary, drives Par2Cxx via
+        // the C shim) + HelperProcessEngine (subprocess fallback / standby license firewall).
         .target(name: "Par2Kit", dependencies: ["ModernPARCore", "Par2Cxx"]),
         // SwiftUI views, scenes, commands. Engine-agnostic: depends only on Core's protocols.
         .target(name: "ModernPARUI", dependencies: ["ModernPARCore"]),
@@ -73,7 +81,10 @@ let package = Package(
             dependencies: ["ModernPARCore", "Par2Kit"],
             resources: [.copy("Fixtures")]
         ),
-        .testTarget(name: "Par2KitTests", dependencies: ["Par2Kit", "Par2Cxx"]),
+        // Par2HelperCLI is a dependency so `swift test` builds the helper binary the
+        // HelperProcessEngine tests spawn.
+        .testTarget(
+            name: "Par2KitTests", dependencies: ["Par2Kit", "Par2Cxx", "Par2HelperCLI"]),
     ],
     cLanguageStandard: .gnu11,
     cxxLanguageStandard: .cxx14

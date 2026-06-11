@@ -16,16 +16,21 @@ public struct SessionRoute: Codable, Hashable, Sendable, Identifiable {
     public var folderBookmark: Data?
     /// Bookmark for the specific .par2 / .par / .rar the user opened, if any.
     public var anchorBookmark: Data?
+    /// Whether a verify run may repair when repairable damage is found. False = verify-only
+    /// (the awaiting-consent path: restored windows must never auto-fire a destructive repair).
+    public var autoRepair: Bool
 
     public init(
         id: UUID = UUID(),
         mode: Mode,
         folderBookmark: Data? = nil,
-        anchorBookmark: Data? = nil
+        anchorBookmark: Data? = nil,
+        autoRepair: Bool = true
     ) {
         self.id = id
         self.mode = mode
         self.folderBookmark = folderBookmark
         self.anchorBookmark = anchorBookmark
+        self.autoRepair = autoRepair
     }
 }
