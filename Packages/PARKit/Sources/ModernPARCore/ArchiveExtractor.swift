@@ -8,7 +8,8 @@ public protocol ArchiveExtractor: Sendable {
     func extract(
         _ archive: SessionRoute,
         to destination: ExtractDestination,
-        password: any PasswordProvider
+        password: any PasswordProvider,
+        conflicts: any ConflictResolver
     ) -> AsyncStream<EngineEvent>
 }
 
@@ -16,6 +17,13 @@ public protocol ArchiveExtractor: Sendable {
 /// matching UnRAR's `UCM_NEEDPASSWORDW` callback. (ARCHITECTURE.md §6)
 public protocol PasswordProvider: Sendable {
     func password(forVolume name: String) async -> String?
+}
+
+/// Decides what happens when extraction output would land on an existing item. The UI's resolver
+/// presents the ask-dialog (or auto-answers from the preference); returning `.ask` or `.cancel`
+/// cancels the placement. (ROADMAP Phase 4 "destination-conflict policy")
+public protocol ConflictResolver: Sendable {
+    func resolve(conflictAt url: URL) async -> ConflictPolicy
 }
 
 public enum ExtractDestination: Sendable {

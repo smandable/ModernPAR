@@ -35,6 +35,9 @@ public final class EmbeddedEngine: PAR2Engine, Sendable {
             // Straight onto the serial queue — wrapping in Task.detached + queue.sync would
             // pin a width-limited Swift Concurrency pool thread for the whole run.
             EngineRunSupport.serialQueue.async {
+                // Quit gating: a cancelled run owns its files until it unwinds.
+                EngineDrainRegistry.shared.enter()
+                defer { EngineDrainRegistry.shared.leave() }
                 Self.execute(
                     route: route, repairs: repairs, threads: threads,
                     token: token, continuation: continuation)

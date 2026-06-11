@@ -19,6 +19,7 @@ let package = Package(
         .library(name: "ModernPARUI", targets: ["ModernPARUI"]),
         .library(name: "ModernPARCore", targets: ["ModernPARCore"]),
         .library(name: "Par2Kit", targets: ["Par2Kit"]),
+        .library(name: "ArchiveKit", targets: ["ArchiveKit"]),
     ],
     targets: [
         // Pure Swift, UI-free, C/C++-free. The domain model + engine seams.
@@ -74,6 +75,81 @@ let package = Package(
         // Swift PAR2 engine layer: MockEngine + EmbeddedEngine (primary, drives Par2Cxx via
         // the C shim) + HelperProcessEngine (subprocess fallback / standby license firewall).
         .target(name: "Par2Kit", dependencies: ["ModernPARCore", "Par2Cxx"]),
+        // The vendored RARLAB UnRAR engine (unrarsrc 7.2.4) behind the extern "C"
+        // unrarshim umbrella — extraction/listing ONLY (the UnRAR license forbids using
+        // this source to develop a RAR-compatible archiver). Swift consumes it as a plain
+        // C module, so no .Cxx interop propagates. LICENSE ISOLATION: the UnRAR license is
+        // GPL-incompatible; this target is a separately-licensed component and must never
+        // be merged into the Par2Cxx (GPL) target or its translation units
+        // (ARCHITECTURE.md §1.4). Compiled-source list mirrors the upstream makefile's
+        // `lib:` target; carries LOCAL PATCHES — see vendor/VENDORED.txt before any
+        // version bump.
+        .target(
+            name: "CUnrar",
+            exclude: [
+                "vendor/VENDORED.txt",
+                "vendor/unrar/license.txt",
+                "vendor/unrar/readme.txt",
+                "vendor/unrar/acknow.txt",
+                "vendor/unrar/makefile",
+                "vendor/unrar/dll.def",
+                "vendor/unrar/dll_nocrypt.def",
+                "vendor/unrar/dll.rc",
+                "vendor/unrar/UnRAR.vcxproj",
+                "vendor/unrar/UnRARDll.vcxproj",
+                // #included into other translation units (NOT standalone objects):
+                "vendor/unrar/arccmt.cpp",  // → archive.cpp
+                "vendor/unrar/blake2s_sse.cpp",  // → blake2s.cpp
+                "vendor/unrar/blake2sp.cpp",  // → blake2s.cpp
+                "vendor/unrar/cmdfilter.cpp",  // → cmddata.cpp
+                "vendor/unrar/cmdmix.cpp",  // → cmddata.cpp
+                "vendor/unrar/coder.cpp",  // → unpack.cpp
+                "vendor/unrar/crypt1.cpp",  // → crypt.cpp
+                "vendor/unrar/crypt2.cpp",  // → crypt.cpp
+                "vendor/unrar/crypt3.cpp",  // → crypt.cpp
+                "vendor/unrar/crypt5.cpp",  // → crypt.cpp
+                "vendor/unrar/hardlinks.cpp",  // → extinfo.cpp
+                "vendor/unrar/log.cpp",  // → consio.cpp
+                "vendor/unrar/model.cpp",  // → unpack.cpp
+                "vendor/unrar/recvol3.cpp",  // → recvol.cpp
+                "vendor/unrar/recvol5.cpp",  // → recvol.cpp
+                "vendor/unrar/suballoc.cpp",  // → unpack.cpp
+                "vendor/unrar/threadmisc.cpp",  // → threadpool.cpp
+                "vendor/unrar/uicommon.cpp",  // → ui.cpp
+                "vendor/unrar/uiconsole.cpp",  // → ui.cpp
+                "vendor/unrar/uisilent.cpp",  // → ui.cpp
+                "vendor/unrar/ulinks.cpp",  // → extinfo.cpp
+                "vendor/unrar/unpack15.cpp",  // → unpack.cpp
+                "vendor/unrar/unpack20.cpp",  // → unpack.cpp
+                "vendor/unrar/unpack30.cpp",  // → unpack.cpp
+                "vendor/unrar/unpack50.cpp",  // → unpack.cpp
+                "vendor/unrar/unpack50frag.cpp",  // → unpack.cpp
+                "vendor/unrar/unpack50mt.cpp",  // → unpack.cpp
+                "vendor/unrar/unpackinline.cpp",  // → unpack.cpp
+                "vendor/unrar/uowners.cpp",  // → extinfo.cpp
+                "vendor/unrar/win32acl.cpp",  // → extinfo.cpp
+                "vendor/unrar/win32lnk.cpp",  // → extinfo.cpp
+                "vendor/unrar/win32stm.cpp",  // → extinfo.cpp
+                // Not part of the upstream `lib:` (RARDLL) build at all:
+                "vendor/unrar/isnt.cpp",
+                "vendor/unrar/motw.cpp",
+                "vendor/unrar/rarpch.cpp",
+                "vendor/unrar/recvol.cpp",
+                "vendor/unrar/rs.cpp",
+            ],
+            cxxSettings: [
+                .headerSearchPath("vendor/unrar"),
+                .define("RARDLL"),  // library build: no main(), implies SILENT
+                .define("RAR_SMP"),
+                .define("_FILE_OFFSET_BITS", to: "64"),
+                .define("_LARGEFILE_SOURCE"),
+                .define("NDEBUG"),
+            ]
+        ),
+        // Swift archive-extraction layer: RARExtractor (CUnrar consumed as a plain C module —
+        // no .Cxx interop; ZipExtractor joins in Phase 5). Injected into Core/UI behind the
+        // ArchiveExtractor protocol only.
+        .target(name: "ArchiveKit", dependencies: ["ModernPARCore", "CUnrar"]),
         // SwiftUI views, scenes, commands. Engine-agnostic: depends only on Core's protocols.
         .target(name: "ModernPARUI", dependencies: ["ModernPARCore"]),
         .testTarget(
@@ -85,6 +161,11 @@ let package = Package(
         // HelperProcessEngine tests spawn.
         .testTarget(
             name: "Par2KitTests", dependencies: ["Par2Kit", "Par2Cxx", "Par2HelperCLI"]),
+        .testTarget(
+            name: "ArchiveKitTests",
+            dependencies: ["ArchiveKit", "ModernPARCore"],
+            resources: [.copy("Fixtures")]
+        ),
     ],
     cLanguageStandard: .gnu11,
     cxxLanguageStandard: .cxx14

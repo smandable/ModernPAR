@@ -22,11 +22,25 @@ public final class OperationSession {
     /// doesn't have — the UI presents the one-time powerbox panel and calls
     /// `folderGrantResolved`/`folderGrantDeclined`. (ROADMAP Phase 3)
     public private(set) var awaitingFolderGrant = false
-    private var pendingVerifyAutoRepair: Bool?
+    /// What to run once the folder grant resolves — verify (the Phase 3 flow) or extract
+    /// (Phase 4; extraction writes its output into the granted folder).
+    private enum PendingGrantAction {
+        case verify(autoRepair: Bool)
+        case extract(
+            extractor: any ArchiveExtractor,
+            password: any PasswordProvider,
+            conflicts: any ConflictResolver)
+    }
+    private var pendingGrantAction: PendingGrantAction?
     /// What the user opened (file or folder) and the `.par2`/`.par` it anchored to — kept so
     /// Verify can hand the engine a route with fresh security-scoped bookmarks.
     public private(set) var openedURL: URL?
     public private(set) var anchorURL: URL?
+    /// Where extraction placed its output (ROADMAP Phase 4) — powers "Show in Finder".
+    public private(set) var placedURL: URL?
+    /// The terminal error of the last run, if it failed — the UI reacts to extraction's
+    /// `.badPassword` / `.passwordNeeded` by re-prompting and re-running.
+    public private(set) var lastError: EngineError?
 
     /// Fast id → index map kept in sync with `rows` so batch application stays O(events), not O(n²).
     private var indexByID: [UUID: Int] = [:]
@@ -91,9 +105,41 @@ public final class OperationSession {
         // state must be restored here — otherwise the spinner sticks at busy/checking forever.
         if isBusy {
             setBusy(false)
-            if docStatus == .checking || docStatus == .repairing {
+            if docStatus == .checking || docStatus == .repairing || docStatus == .extracting {
                 docStatus = .waitingToStart
             }
+        }
+    }
+
+    /// Starts an archive extraction (ROADMAP Phase 4). The roster, progress, statuses, and the
+    /// placed-output URL all arrive through the same `EngineEvent` stream verify/repair uses,
+    /// so the window renders extraction with the identical machinery.
+    public func startExtract(
+        _ route: SessionRoute,
+        using extractor: any ArchiveExtractor,
+        destination: ExtractDestination = .besideArchive,
+        password: any PasswordProvider,
+        conflicts: any ConflictResolver
+    ) {
+        cancel()
+        reset(keepingDocument: true)
+        if let data = route.anchorBookmark, let resolved = try? ScopedAccess.resolve(data) {
+            // Record what we're extracting for the title bar / re-runs; the extractor manages
+            // its own scoped access, so balance the resolve immediately.
+            openedURL = resolved.url
+            anchorURL = resolved.url
+            if resolved.didStart { resolved.url.stopAccessingSecurityScopedResource() }
+        }
+        setBusy(true)
+        // docStatus stays .waitingToStart until the engine's own .docStatusChanged(.extracting)
+        // arrives — RAR runs serialize process-wide, so this run may be QUEUED behind another
+        // window's extraction and must not claim to be extracting while it waits.
+        let stream = extractor.extract(
+            route, to: destination, password: password, conflicts: conflicts)
+        task = Task { [weak self] in
+            await self?.consume(stream)
+            guard !Task.isCancelled else { return }
+            self?.setBusy(false)
         }
     }
 
@@ -102,11 +148,57 @@ public final class OperationSession {
     public func requestVerify(using engine: any PAR2Engine, autoRepair: Bool) {
         guard anchorURL != nil, !isBusy else { return }
         if needsFolderGrant {
-            pendingVerifyAutoRepair = autoRepair
+            pendingGrantAction = .verify(autoRepair: autoRepair)
             awaitingFolderGrant = true
         } else {
             startVerify(using: engine, autoRepair: autoRepair)
         }
+    }
+
+    /// Opens a RAR archive and chains into extraction through the same one-time folder-grant
+    /// flow verify uses — extraction reads sibling volumes and writes output into the
+    /// archive's folder, so a single-file grant is not enough. (ROADMAP Phase 4)
+    public func openArchive(
+        _ url: URL,
+        using extractor: any ArchiveExtractor,
+        password: any PasswordProvider,
+        conflicts: any ConflictResolver
+    ) {
+        cancel()
+        reset()
+        openedURL = url
+        anchorURL = url
+        log.append("Opened archive \(url.lastPathComponent).")
+        requestExtract(using: extractor, password: password, conflicts: conflicts)
+    }
+
+    /// The grant-aware extraction entry point (mirror of `requestVerify`).
+    public func requestExtract(
+        using extractor: any ArchiveExtractor,
+        password: any PasswordProvider,
+        conflicts: any ConflictResolver
+    ) {
+        guard anchorURL != nil, !isBusy else { return }
+        if needsFolderGrant {
+            pendingGrantAction = .extract(
+                extractor: extractor, password: password, conflicts: conflicts)
+            awaitingFolderGrant = true
+        } else {
+            startExtractFromAnchor(using: extractor, password: password, conflicts: conflicts)
+        }
+    }
+
+    /// Runs the extractor against the opened archive, minting fresh security-scoped bookmarks.
+    private func startExtractFromAnchor(
+        using extractor: any ArchiveExtractor,
+        password: any PasswordProvider,
+        conflicts: any ConflictResolver
+    ) {
+        guard let anchorURL else { return }
+        var route = SessionRoute(mode: .extractArchive)
+        route.anchorBookmark = try? ScopedAccess.bookmark(for: anchorURL)
+        route.folderBookmark = folderGrantBookmark()
+        startExtract(route, using: extractor, password: password, conflicts: conflicts)
     }
 
     /// Surface an open/restore failure that happens before any parse can run (e.g. a restored
@@ -114,6 +206,15 @@ public final class OperationSession {
     public func reportOpenFailure(_ message: String) {
         docStatus = .notValid
         log.append(message)
+    }
+
+    /// A restored extraction window: surface what it was showing, but never re-extract
+    /// without consent (the same principle as restored verify windows; ROADMAP Phase 3).
+    public func noteRestoredArchive(_ url: URL) {
+        openedURL = url
+        anchorURL = url
+        log.append(
+            "Archive \(url.lastPathComponent) — use the Extract button to extract it again.")
     }
 
     private func setBusy(_ busy: Bool) {
@@ -155,7 +256,7 @@ public final class OperationSession {
             if let engine, outcome.parSet != nil, self.parSet?.kind == .par2 {
                 if self.needsFolderGrant {
                     // The UI presents the one-time "grant this folder" powerbox panel.
-                    self.pendingVerifyAutoRepair = autoRepair
+                    self.pendingGrantAction = .verify(autoRepair: autoRepair)
                     self.awaitingFolderGrant = true
                 } else {
                     self.startVerify(using: engine, autoRepair: autoRepair)
@@ -164,19 +265,31 @@ public final class OperationSession {
         }
     }
 
-    /// The folder grant was given (and persisted by the caller); run the deferred verify.
+    /// The folder grant was given (and persisted by the caller); run the deferred action.
     public func folderGrantResolved(using engine: any PAR2Engine) {
         awaitingFolderGrant = false
-        startVerify(using: engine, autoRepair: pendingVerifyAutoRepair ?? true)
-        pendingVerifyAutoRepair = nil
+        let action = pendingGrantAction
+        pendingGrantAction = nil
+        switch action {
+        case .extract(let extractor, let password, let conflicts):
+            startExtractFromAnchor(using: extractor, password: password, conflicts: conflicts)
+        case .verify(let autoRepair):
+            startVerify(using: engine, autoRepair: autoRepair)
+        case nil:
+            startVerify(using: engine, autoRepair: true)
+        }
     }
 
     /// The user declined the folder grant; stay open in parse-only mode.
     public func folderGrantDeclined() {
         awaitingFolderGrant = false
-        pendingVerifyAutoRepair = nil
+        let wasExtract =
+            if case .extract = pendingGrantAction { true } else { false }
+        pendingGrantAction = nil
         log.append(
-            "Folder access not granted — verify would report every data file as missing. Use the Verify button after granting access, or open the enclosing folder."
+            wasExtract
+                ? "Folder access not granted — extraction needs access to the archive's folder to read all volumes and write the output."
+                : "Folder access not granted — verify would report every data file as missing. Use the Verify button after granting access, or open the enclosing folder."
         )
     }
 
@@ -298,6 +411,8 @@ public final class OperationSession {
         docStatus = .waitingToStart
         progress = 0
         log.removeAll(keepingCapacity: true)
+        placedURL = nil
+        lastError = nil
         if !keepingDocument {
             parSet = nil
             openedURL = nil
@@ -336,12 +451,23 @@ public final class OperationSession {
                 log.append(line)
             case .docStatusChanged(let status):
                 docStatus = status
+            case .extractionPlaced(let url):
+                placedURL = url
             case .finished(let result):
                 progress = 1
                 if case .failure(let error) = result {
+                    lastError = error
                     switch error {
                     case .cancelled:
-                        break  // cancel() already restored terminal state
+                        // Either cancel() already restored terminal state (task cancellation),
+                        // or the ENGINE reported a user-cancel (e.g. Cancel at the destination-
+                        // conflict dialog) — then the running status must be cleared here or
+                        // the window shows "Extracting files…" forever.
+                        if docStatus == .checking || docStatus == .repairing
+                            || docStatus == .extracting
+                        {
+                            docStatus = .waitingToStart
+                        }
                     case .notImplemented:
                         docStatus = .internalError
                         log.append("Operation failed: not implemented yet.")
@@ -351,10 +477,28 @@ public final class OperationSession {
                     case .engine(let code, let message):
                         if docStatus == .checking || docStatus == .repairing {
                             docStatus = .internalError
+                        } else if docStatus == .extracting {
+                            docStatus = .extractionFailed
                         }
                         log.append("Engine failed (code \(code)): \(message)")
+                    case .passwordNeeded:
+                        docStatus = .extractionFailed
+                        log.append(
+                            "This archive is password-protected — enter the password to extract it."
+                        )
+                    case .badPassword:
+                        docStatus = .extractionFailed
+                        log.append("The password is wrong (or the encrypted data is damaged).")
+                    case .volumeMissing(let name):
+                        docStatus = .extractionFailed
+                        log.append("A required volume is missing: \(name)")
                     }
                 }
+                // Terminal state must be atomic from an observer's perspective: the UI's
+                // retry-on-badPassword fires on lastError and guards on !isBusy, so busy must
+                // clear in the SAME main-actor job that published the error (the post-consume
+                // setBusy(false) is a backstop that runs a suspension point later).
+                setBusy(false)
             }
         }
     }

@@ -52,6 +52,20 @@ public struct SetWindow: View {
             guard awaiting else { return }
             presentFolderGrant()
         }
+        .onChange(of: session.docStatus) { _, status in
+            // Notify only on the green end state — a partial/failed extraction may still
+            // place output, and a success notification for it would be a lie.
+            guard status == .extractedSuccessfully, let placed = session.placedURL else {
+                return
+            }
+            ExtractionNotifier.shared.notifyExtractionFinished(of: placed)
+        }
+        .onChange(of: session.lastError) { _, error in
+            // Wrong password → re-prompt and re-run (the prompt-once cache lives per run).
+            // A declined prompt (.passwordNeeded) deliberately does NOT loop.
+            guard error == .badPassword, !session.isBusy else { return }
+            startExtraction(retryAfterFailure: true)
+        }
         .onDisappear {
             // Closing the document cancels its operation (the original's behavior) and frees
             // the quit gate; the engine unwinds cooperatively in the background.
@@ -74,7 +88,15 @@ public struct SetWindow: View {
                 }
                 .help(showOutput ? "Hide par Output" : "Show par Output")
 
-                if session.docStatus == .repairNeeded {
+                if isArchiveSession {
+                    Button {
+                        startExtraction()
+                    } label: {
+                        Label("Extract", systemImage: "archivebox")
+                    }
+                    .disabled(session.isBusy || session.anchorURL == nil)
+                    .help("Extract the open archive")
+                } else if session.docStatus == .repairNeeded {
                     Button {
                         session.requestVerify(using: model.par2Engine, autoRepair: true)
                     } label: {
@@ -97,21 +119,52 @@ public struct SetWindow: View {
                 }
             }
         }
-        .background(OpenFilesClaimant(model: model, session: session, route: route))
+        .background(
+            OpenFilesClaimant(
+                model: model, session: session, route: route,
+                openFirst: { openUserInitiated($0) }))
     }
 
-    /// A user-initiated open (drop, Open button, Cmd-O window): parse, then auto-verify —
-    /// the MacPAR open → verify → repair loop.
+    /// Whether this window is currently showing an archive extraction. The session's anchor
+    /// wins over the route mode: window content can change after creation (a PAR set opened
+    /// into a Cmd-U window must get Verify/Repair back, and vice versa).
+    private var isArchiveSession: Bool {
+        if let anchor = session.anchorURL { return ArchiveFileTypes.isRARArchive(anchor) }
+        return route?.mode == .extractArchive
+    }
+
+    /// A user-initiated open (drop, Open button, Cmd-O window): RAR archives go to the
+    /// extraction flow; PAR files parse, then auto-verify — the MacPAR open → verify →
+    /// repair loop.
     private func openUserInitiated(_ url: URL) {
-        session.open(
-            url, thenVerifyUsing: model.par2Engine, autoRepair: model.settings.autoRepair)
+        let isDirectory =
+            (try? url.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == true
+        if !isDirectory, ArchiveFileTypes.isRARArchive(url),
+            let extractor = model.archiveExtractor
+        {
+            session.openArchive(
+                url, using: extractor,
+                password: UIPasswordProvider(), conflicts: UIConflictResolver())
+        } else {
+            session.open(
+                url, thenVerifyUsing: model.par2Engine, autoRepair: model.settings.autoRepair)
+        }
     }
 
-    /// Windows arriving with a route (Cmd-O, Finder open, dock drop — or system restoration).
-    /// Only routes minted THIS launch auto-run; a restored window re-opens its set read-only
-    /// and waits for consent. (ROADMAP Phase 3 exit criterion)
+    /// Starts (or restarts) extraction of the opened archive. (ROADMAP Phase 4)
+    private func startExtraction(retryAfterFailure: Bool = false) {
+        guard let extractor = model.archiveExtractor else { return }
+        session.requestExtract(
+            using: extractor,
+            password: UIPasswordProvider(previousAttemptFailed: retryAfterFailure),
+            conflicts: UIConflictResolver())
+    }
+
+    /// Windows arriving with a route (Cmd-O, Cmd-U, Finder open, dock drop — or system
+    /// restoration). Only routes minted THIS launch auto-run; a restored window re-opens its
+    /// content read-only and waits for consent. (ROADMAP Phase 3 exit criterion)
     private func autoRunFromRoute() {
-        guard let route, route.mode == .verifyRepair, session.parSet == nil, !session.isBusy
+        guard let route, session.parSet == nil, session.anchorURL == nil, !session.isBusy
         else { return }
         guard let bookmark = route.anchorBookmark ?? route.folderBookmark else { return }
         guard let resolved = try? ScopedAccess.resolve(bookmark) else {
@@ -122,9 +175,24 @@ public struct SetWindow: View {
             }
             return
         }
+        let isFresh = model.consumeFreshness(of: route.id)
+        if route.mode == .extractArchive {
+            guard let extractor = model.archiveExtractor else { return }
+            if isFresh {
+                session.openArchive(
+                    resolved.url, using: extractor,
+                    password: UIPasswordProvider(), conflicts: UIConflictResolver())
+            } else {
+                // Restored extraction window: never re-extract without consent (the Extract
+                // button re-runs it). Surface what the window was showing.
+                session.noteRestoredArchive(resolved.url)
+            }
+            return
+        }
+        guard route.mode == .verifyRepair else { return }
         // The resolved grant stays active for the window's lifetime; the session re-bookmarks
         // for its own engine runs.
-        if model.consumeFreshness(of: route.id) {
+        if isFresh {
             session.open(
                 resolved.url, thenVerifyUsing: model.par2Engine, autoRepair: route.autoRepair)
         } else {
@@ -182,6 +250,8 @@ struct OpenFilesClaimant: View {
     let model: AppModel
     let session: OperationSession
     let route: SessionRoute?
+    /// Routes a claimed URL the same way the window's own opens do (PAR vs archive).
+    let openFirst: (URL) -> Void
 
     var body: some View {
         Color.clear
@@ -190,12 +260,10 @@ struct OpenFilesClaimant: View {
                     route?.anchorBookmark == nil && route?.folderBookmark == nil
                 OpenFilesBroker.installHandler { urls in
                     var remaining = urls[...]
-                    if isPristine, session.parSet == nil, !session.isBusy,
-                        let first = remaining.popFirst()
+                    if isPristine, session.parSet == nil, session.anchorURL == nil,
+                        !session.isBusy, let first = remaining.popFirst()
                     {
-                        session.open(
-                            first, thenVerifyUsing: model.par2Engine,
-                            autoRepair: model.settings.autoRepair)
+                        openFirst(first)
                     }
                     for url in remaining {
                         openWindow(value: model.makeRoute(opening: url))

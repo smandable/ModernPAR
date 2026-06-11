@@ -203,6 +203,28 @@ These are the load-bearing calls that the phases below assume. Each resolves a r
 
 **Goal.** Extract RAR sets (the dominant Usenet payload) natively, matching the Keka/Unarchiver UX bar.
 
+> **Status: DONE (2026-06-11).** unrarsrc 7.2.4 vendored into `CUnrar` behind the pure-C
+> `unrarshim` umbrella (extraction/listing ONLY; **three documented local patches** fixing
+> unrar.dll's sticky-error misreporting — see `CUnrar/vendor/VENDORED.txt` before any bump;
+> NO `.Cxx` interop anywhere — Swift consumes CUnrar as a plain C module, beating the planned
+> quarantine). `ArchiveKit.RARExtractor` does a list pass + staged extract with
+> single-item/wrapper placement, conflict policy (ask/overwrite/keep-both/cancel with a
+> source-volume trash guard), prompt-once password caching across both passes, first-volume
+> normalization with fail-fast on a missing first volume, and mapped readable errors
+> (RAR5-aware wrong-password vs damaged-data diagnosis). UI: Cmd-U panel, auto-extract on
+> fresh routes (restored windows never auto-run), modal password prompt with a
+> wrong-password re-prompt loop, progress + cancel, "Extraction finished" notification with
+> Show in Finder (delegate installed at launch), keep-broken-files preference end-to-end,
+> verbatim UnRAR license paragraph in Settings → Unrar + THIRD-PARTY-LICENSES.md. Exit
+> criteria verified by 54 extraction tests against a real-archive corpus (RAR 1.5/2.0/3/5,
+> both multi-volume styles, passwords, encrypted headers, unicode, solid; rarfile corpus,
+> ISC) plus synthesized hostile fixtures — including regressions for every confirmed finding
+> of the **20-finding adversarial review** (silent file-loss after mid-archive corruption,
+> warning-skips failing whole runs, false success on missing first volumes, UI race killing
+> the password re-prompt, notification lies, quit-gate drain). `.001`/SFX first-file forms
+> and the "extract to" destination picker remain v1 (Phase 7 binds the remaining prefs).
+> 145 tests green; libarchive is NOT in the RAR path; no CLI is ever spawned.
+
 **Tasks.**
 - Build RARLAB UnRAR (unrarsrc 7.2.4) as a static lib in `CUnrar` (consumed by `ArchiveKit`); C/Obj-C++ shim exposing `RAROpenArchiveEx` / `RARProcessFileW` / `RARSetPassword` / `RARSetCallback`. `RARExtractor: ArchiveExtractor` Swift API (ARCHITECTURE.md §1.4, §6).
 - First-file forms (MVP): `.rar` + `.rNN`, `.partNN.rar`. (`.001/.002` and SFX `.exe` are v1/later.)

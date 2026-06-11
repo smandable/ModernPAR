@@ -15,10 +15,14 @@ public enum DocStatus: Sendable, Equatable {
     case onlyNonRecoverableMissing  // DocStatus13/14
     case notValid  // DocStatus9
     case internalError  // DocStatus15
+    // Archive extraction (ROADMAP Phase 4; the original's unrar progress-window states).
+    case extracting
+    case extractedSuccessfully  // (green)
+    case extractionFailed
 
     public var isGreenEndState: Bool {
         switch self {
-        case .allFilesOK, .restoredSuccessfully, .restoredWithRenames:
+        case .allFilesOK, .restoredSuccessfully, .restoredWithRenames, .extractedSuccessfully:
             return true
         default:
             return false

@@ -78,3 +78,32 @@ public final class OperationRegistry {
         }
     }
 }
+
+/// Counts engine runs that are still UNWINDING after their session stopped tracking them: a
+/// cancelled run keeps owning its files (and any staging folder) until the blocking engine
+/// call returns, so quit must also wait for this to reach zero — otherwise close-then-quit
+/// kills the process mid-write and leaves litter behind. Engines enter on their worker queue
+/// before the blocking call and leave after every cleanup `defer` has run. (Phase 4 review)
+public final class EngineDrainRegistry: @unchecked Sendable {
+    public static let shared = EngineDrainRegistry()
+    private let lock = NSLock()
+    private var count = 0
+
+    public func enter() {
+        lock.lock()
+        count += 1
+        lock.unlock()
+    }
+
+    public func leave() {
+        lock.lock()
+        count -= 1
+        lock.unlock()
+    }
+
+    public var activeCount: Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return count
+    }
+}

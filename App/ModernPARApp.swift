@@ -1,3 +1,4 @@
+import ArchiveKit
 import ModernPARCore
 import ModernPARUI
 import Par2Kit
@@ -10,10 +11,17 @@ import SwiftUI
 struct ModernPARApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
 
-    /// The real embedded engine (par2cmdline-turbo via Par2Shim) — swapped in behind the
-    /// `PAR2Engine` protocol without touching the UI, exactly as the seam was designed.
-    /// (`MockEngine` remains for tests/previews; `HelperProcessEngine` is the fallback.)
-    @State private var model = AppModel(par2Engine: EmbeddedEngine())
+    /// The real engines, injected behind their protocols without touching the UI, exactly as
+    /// the seams were designed: par2cmdline-turbo via Par2Shim (`MockEngine` remains for
+    /// tests/previews; `HelperProcessEngine` is the fallback), and RARLAB UnRAR via
+    /// unrarshim for archive extraction (Phase 4). The keep-broken-files preference is read
+    /// per run through UserDefaults (`Settings` mirrors the same key) because the engine
+    /// evaluates it off the main actor.
+    @State private var model = AppModel(
+        par2Engine: EmbeddedEngine(),
+        archiveExtractor: RARExtractor(keepBrokenFiles: {
+            UserDefaults.standard.bool(forKey: Settings.keepBrokenKey)
+        }))
 
     var body: some Scene {
         WindowGroup(for: SessionRoute.self) { $route in

@@ -1,0 +1,90 @@
+CUnrar vendored source provenance
+=================================
+
+unrar/  — RARLAB UnRAR, source package "unrarsrc" version 7.2.4
+  Upstream:  https://www.rarlab.com/rar_add.htm
+  Tarball:   https://www.rarlab.com/rar/unrarsrc-7.2.4.tar.gz
+  SHA-256:   b02e571a33af7711cd803080500370dc1d28eea82b2032480819d27462ad8b31
+  Fetched:   2026-06-11
+  License:   unrar/license.txt (the UnRAR source license — free for extraction,
+             may NOT be used to develop a RAR/WinRAR-compatible archiver or to
+             re-create the RAR compression algorithm; see the verbatim paragraph
+             reproduced in THIRD-PARTY-LICENSES.md and the app acknowledgements)
+
+  Version naming note: the source *package* is 7.2.4; version.hpp inside it
+  reports the engine as RAR/UnRAR 7.20 (2026-02-01). Both refer to the same
+  release — RARLAB numbers the tarball and the engine differently.
+
+LOCAL MODIFICATIONS (re-apply on any version bump — each is marked with a
+"LOCAL PATCH (ModernPAR)" comment at the site; 1–2 reproduced with the
+rar15-comment / rar202-comment-nopsw fixtures, which the unrar CLI lists and
+extracts fine while the unpatched unrar.dll path returns ERAR_BAD_DATA; 3
+reproduced with a mid-archive corruption fixture where every good file after
+the corrupt one was silently dropped):
+  1. arcread.cpp ReadHeader15 generic header-CRC check: skip HEAD_FILE /
+     HEAD_SERVICE headers WHOSE CASE-BRANCH CRC CHECK PASSED (tracked by the
+     patch-added FileHeaderCRCValid — old-style embedded file comments make
+     the stored CRC cover only the processed part, so upstream's full-buffer
+     re-check fails on perfectly good headers; genuinely corrupt file headers
+     still take the generic block, preserving RARX_CRC classification and the
+     FailedHeaderDecryption stop for encrypted headers) and a HEAD_MAIN with
+     MHD_COMMENT (its comment bytes are deliberately not read into Raw, so
+     the stored CRC cannot be verified from the buffer). Without the skips,
+     every commented RAR 1.5-2.x archive silently set the sticky RARX_CRC
+     error code, and unrar.dll's call tails
+     (`RarErrorToDll(ErrHandler.GetErrorCode())`) then misreport every
+     subsequent successful RARReadHeaderEx/RARProcessFile as BAD_DATA.
+  2. dll.cpp RARReadHeaderEx end-of-search path: only return ERAR_BAD_DATA for
+     a sticky Arc.BrokenHeader when CurBlockPos != FileLength(). BrokenHeader
+     is a warning flag (the CLI keeps going on it); upstream's unconditional
+     check turns a clean end-of-archive after any header warning into
+     BAD_DATA. `!=` not `<`: a corrupt header whose garbage size fields jump
+     PAST the end is still damage. (Known residual false negative: a garbage
+     jump landing EXACTLY on FileLength() reads as a clean end.)
+  3. dll.cpp RARReadHeaderEx: reset Data->Cmd.DllError=0 at the top of the try
+     block, exactly as ProcessFile already does. Without it, a per-file error
+     (one corrupt file mid-archive) stays in DllError and the function's
+     success tail re-reports it for every following header, aborting
+     keep-extracting loops — good files after the corrupt one were silently
+     dropped while partial output was still delivered.
+Related (shim-side, not a vendor patch): UnrarShim.cpp calls ErrHandler.Clean()
+before each header read because the engine's global error state is sticky and
+both call tails convert it into per-call return codes; and treats per-call
+ERAR_UNKNOWN as a warning-class per-file skip (e.g. unsafe/absolute symlinks,
+which the DLL policy never extracts) rather than a run-fatal error.
+The shim (../include/unrarshim.h, ../UnrarShim.cpp) lives OUTSIDE vendor/ so
+version bumps are otherwise a clean delete-and-replace of unrar/.
+
+Build mapping (mirrors the upstream `makefile` `lib:` target):
+  - Compiled translation units = OBJECTS + LIB_OBJ from the makefile
+    (rar.cpp … largepage.cpp + filestr.cpp scantree.cpp dll.cpp qopen.cpp).
+  - Everything else is EXCLUDED in Package.swift, because upstream #includes
+    those .cpp files into other translation units (e.g. unpack15/20/30/50*.cpp
+    into unpack.cpp, crypt1/2/3/5.cpp into crypt.cpp, uicommon/uisilent/
+    uiconsole.cpp into ui.cpp, log.cpp into consio.cpp, arccmt.cpp into
+    archive.cpp, blake2s_sse/blake2sp.cpp into blake2s.cpp, threadmisc.cpp
+    into threadpool.cpp, recvol3/5.cpp into recvol.cpp) or they are not part
+    of the lib build at all (recvol.cpp, rs.cpp, isnt.cpp, motw.cpp,
+    rarpch.cpp, win32*.cpp, hardlinks.cpp/uowners.cpp/ulinks.cpp via
+    extinfo.cpp, cmdfilter/cmdmix.cpp via cmddata.cpp, coder/model/suballoc/
+    unpackinline.cpp via unpack.cpp, encname/sha1 ARE in OBJECTS).
+  - Defines = -DRARDLL -DRAR_SMP -D_FILE_OFFSET_BITS=64 -D_LARGEFILE_SOURCE
+    (RARDLL implies SILENT via os.hpp and disables the CLI main() in rar.cpp).
+
+Thread-safety contract: the UnRAR DLL surface keeps process-global state
+(ErrHandler is cleaned in RAROpenArchiveEx). Do NOT run two archive operations
+concurrently in one process — ArchiveKit serializes every call on one queue.
+
+On a version bump re-verify (cost real analysis the first time):
+  1. The makefile OBJECTS/LIB_OBJ lists against Package.swift's exclude list.
+  2. UCM_* callback contracts: UCM_NEEDPASSWORDW buffer is wchar[MAXPASSWORD]
+     with P2 = capacity in wchars (extract.cpp ExtrDllGetPassword,
+     arcread.cpp encrypted headers); UCM_CHANGEVOLUMEW ASK passes a
+     MAXPATHSIZE wchar buffer (volume.cpp DllVolChange), return -1 aborts;
+     UCM_PROCESSDATA return -1 cancels (rdwrfn.cpp); UCM_LARGEDICT P1/P2 are
+     KiB, return 1 permits (uisilent.cpp uiDictLimit).
+  3. _APPLE keeps WideToChar/CharToWide on UTF-8 (unicode.cpp), so paths are
+     locale-independent — if that #ifdef changes, sandboxed apps (locale "C")
+     would mangle non-ASCII names.
+  4. ROADF_*/ERAR_* values in dll.hpp against the UNRARSHIM_* mirrors
+     (static_asserts in UnrarShim.cpp will catch drift at compile time).

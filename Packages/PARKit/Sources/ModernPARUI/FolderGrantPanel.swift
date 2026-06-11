@@ -15,7 +15,7 @@ public enum FolderGrantPanel {
         panel.allowsMultipleSelection = false
         panel.directoryURL = suggestedFolder
         panel.message =
-            "ModernPAR needs access to this folder to verify and repair the set's data files."
+            "ModernPAR needs access to this folder to read the set's files and write its output (repaired files or extracted archives)."
         panel.prompt = "Grant Access"
         return panel.runModal() == .OK ? panel.url : nil
     }
@@ -29,8 +29,23 @@ public enum OpenSetPanel {
         panel.canChooseFiles = true
         panel.canChooseDirectories = true
         panel.allowsMultipleSelection = false
-        panel.message = "Choose a .par2 / .par file, or a folder containing a PAR set."
+        panel.message = "Choose a .par2 / .par file or .rar archive, or a folder containing a set."
         panel.prompt = "Open"
+        return panel.runModal() == .OK ? panel.url : nil
+    }
+}
+
+/// Open panel for RAR archives (Cmd-U). Any volume of a set works — extraction normalizes
+/// to the first volume. (ROADMAP Phase 4)
+@MainActor
+public enum OpenArchivePanel {
+    public static func present() -> URL? {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = false
+        panel.allowsMultipleSelection = false
+        panel.message = "Choose a .rar archive (any volume of a multi-part set)."
+        panel.prompt = "Extract"
         return panel.runModal() == .OK ? panel.url : nil
     }
 }

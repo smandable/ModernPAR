@@ -11,6 +11,9 @@ public enum EngineEvent: Sendable {
     case overallProgress(fraction: Double)  // 0...1
     case logLine(String)  // raw helper output → "Show par Output" pane
     case docStatusChanged(DocStatus)
+    /// Extraction placed its output at this URL — feeds the session's `placedURL`, which powers
+    /// the completion notification's "Show in Finder". (ROADMAP Phase 4)
+    case extractionPlaced(URL)
     case finished(Result<OperationSummary, EngineError>)
 }
 
@@ -28,4 +31,9 @@ public enum EngineError: Error, Sendable, Equatable {
     case launchFailed(String)
     case cancelled
     case engine(code: Int32, message: String)
+    // Archive extraction (ROADMAP Phase 4). Distinct cases because the UI reacts to each
+    // differently: re-prompt for a password, or name the missing volume.
+    case passwordNeeded
+    case badPassword
+    case volumeMissing(String)
 }

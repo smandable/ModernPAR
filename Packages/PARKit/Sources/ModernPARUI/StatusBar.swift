@@ -54,6 +54,9 @@ public struct StatusBar: View {
         case .onlyNonRecoverableMissing: return "Only non-recoverable files are missing."
         case .notValid: return "The PAR file is not valid."
         case .internalError: return "An internal error occurred during processing."
+        case .extracting: return "Extracting files…"
+        case .extractedSuccessfully: return "Extraction finished successfully."
+        case .extractionFailed: return "Extraction failed."
         }
     }
 }

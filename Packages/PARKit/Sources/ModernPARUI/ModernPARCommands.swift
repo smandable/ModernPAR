@@ -27,25 +27,28 @@ public struct ModernPARCommands: Commands {
             .keyboardShortcut("s", modifiers: [.command, .shift])
 
             Button("Unrar Archive…") {
-                openWindow(value: SessionRoute(mode: .extractArchive))
+                if let url = OpenArchivePanel.present() {
+                    openWindow(value: model.makeRoute(extracting: url))
+                }
             }
             .keyboardShortcut("u")
         }
 
         CommandMenu("Operation") {
             // Always verify-only — the deliberate no-side-effects check, distinct from the
-            // toolbar Verify which follows the auto-repair preference.
+            // toolbar Verify which follows the auto-repair preference. Disabled for archive
+            // sessions: running the PAR2 engine against a .rar anchor is never meaningful.
             Button("Verify Only") {
                 activeSession?.requestVerify(using: model.par2Engine, autoRepair: false)
             }
             .keyboardShortcut("k")
-            .disabled(activeSession?.anchorURL == nil || activeSession?.isBusy != false)
+            .disabled(par2CommandsUnavailable)
 
             Button("Repair Again") {
                 activeSession?.requestVerify(using: model.par2Engine, autoRepair: true)
             }
             .keyboardShortcut("r")
-            .disabled(activeSession?.anchorURL == nil || activeSession?.isBusy != false)
+            .disabled(par2CommandsUnavailable)
 
             Button("Cancel Operation") {
                 activeSession?.cancel()
@@ -53,5 +56,12 @@ public struct ModernPARCommands: Commands {
             .keyboardShortcut(".", modifiers: .command)
             .disabled(activeSession?.isBusy != true)
         }
+    }
+
+    /// Verify/Repair require a non-archive anchor and an idle session.
+    private var par2CommandsUnavailable: Bool {
+        guard let session = activeSession, let anchor = session.anchorURL, !session.isBusy
+        else { return true }
+        return ArchiveFileTypes.isRARArchive(anchor)
     }
 }

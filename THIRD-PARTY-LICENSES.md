@@ -17,11 +17,28 @@ app's About panel. See `docs/ARCHITECTURE.md` §0–§1 for the licensing postur
 The exact `par2cmdline-turbo` source revision bundled with each ModernPAR release, plus any patches,
 will be published alongside the release (tag) so recipients can obtain the corresponding source.
 
+## UnRAR attribution (mandatory, verbatim)
+
+Per the UnRAR license, the following paragraph is reproduced verbatim (it also appears in the
+app's Settings → Unrar acknowledgements and in the source comments of `CUnrar`):
+
+> UnRAR source code may be used in any software to handle
+> RAR archives without limitations free of charge, but cannot be
+> used to develop RAR (WinRAR) compatible archiver and to
+> re-create RAR compression algorithm, which is proprietary.
+> Distribution of modified UnRAR source code in separate form
+> or as a part of other software is permitted, provided that
+> full text of this paragraph, starting from "UnRAR source code"
+> words, is included in license, or in documentation if license
+> is not available, and in source code comments of resulting package.
+
 ## Notes
 - `COPYING` in the repo root is **ModernPAR's own license** (GPL-2.0-or-later) and also covers the
   vendored par2cmdline-turbo engine.
 - RARLAB UnRAR is **GPL-incompatible** (non-OSI field-of-use restriction); it is kept in its own
-  component/translation units, documented as a separately-licensed part, and never combined into
-  the GPL engine's link unit. This coexistence is the top pre-release legal-review item.
-- `docs/licenses/UnRAR-license.txt` holds the verbatim RARLAB UnRAR license (placeholder until the
-  source tarball is vendored).
+  component/translation units (`Packages/PARKit/Sources/CUnrar/`, vendored in Phase 4 with two
+  documented local patches — see `CUnrar/vendor/VENDORED.txt`), documented as a
+  separately-licensed part, and never combined into the GPL engine's link unit. This coexistence
+  is the top pre-release legal-review item.
+- The full RARLAB UnRAR license ships verbatim at
+  `Packages/PARKit/Sources/CUnrar/vendor/unrar/license.txt` (and `docs/licenses/UnRAR-license.txt`).

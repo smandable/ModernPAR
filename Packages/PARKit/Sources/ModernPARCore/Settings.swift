@@ -14,6 +14,15 @@ public final class Settings {
     public var autoRepair: Bool = true
     /// Move par/par2/pNN files to Trash after a successful verify/repair.
     public var autoDeleteParFiles: Bool = false
+    /// Unrar: keep files that fail their checksum instead of deleting them (ROADMAP Phase 4).
+    /// UserDefaults-backed already (unlike its siblings) because the extraction engine reads
+    /// it OFF the main actor at run start — the engine's injected closure reads the same key.
+    public var keepBrokenFiles: Bool = UserDefaults.standard.bool(forKey: Settings.keepBrokenKey)
+    {
+        didSet { UserDefaults.standard.set(keepBrokenFiles, forKey: Settings.keepBrokenKey) }
+    }
+
+    nonisolated public static let keepBrokenKey = "unrar.keepBrokenFiles"
 
     public init() {}
 }

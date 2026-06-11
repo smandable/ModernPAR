@@ -13,6 +13,7 @@
 		AA0000000000000000000054 /* ModernPARUI in Frameworks */ = {isa = PBXBuildFile; productRef = AA0000000000000000000051 /* ModernPARUI */; };
 		AA0000000000000000000055 /* ModernPARCore in Frameworks */ = {isa = PBXBuildFile; productRef = AA0000000000000000000052 /* ModernPARCore */; };
 		AA0000000000000000000056 /* Par2Kit in Frameworks */ = {isa = PBXBuildFile; productRef = AA0000000000000000000053 /* Par2Kit */; };
+		AA0000000000000000000058 /* ArchiveKit in Frameworks */ = {isa = PBXBuildFile; productRef = AA0000000000000000000057 /* ArchiveKit */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -32,6 +33,7 @@
 				AA0000000000000000000054 /* ModernPARUI in Frameworks */,
 				AA0000000000000000000055 /* ModernPARCore in Frameworks */,
 				AA0000000000000000000056 /* Par2Kit in Frameworks */,
+				AA0000000000000000000058 /* ArchiveKit in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -86,6 +88,7 @@
 				AA0000000000000000000051 /* ModernPARUI */,
 				AA0000000000000000000052 /* ModernPARCore */,
 				AA0000000000000000000053 /* Par2Kit */,
+				AA0000000000000000000057 /* ArchiveKit */,
 			);
 			productName = ModernPAR;
 			productReference = AA0000000000000000000003 /* ModernPAR.app */;
@@ -300,6 +303,10 @@
 		AA0000000000000000000053 /* Par2Kit */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = Par2Kit;
+		};
+		AA0000000000000000000057 /* ArchiveKit */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = ArchiveKit;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

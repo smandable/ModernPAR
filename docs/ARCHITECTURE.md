@@ -181,13 +181,14 @@ target directly hurts testability.
             extern "C" umbrella — catches all C++ exceptions, imported by Swift as
             a plain C module (so Par2Kit needs no .Cxx interop)
 
-     ArchiveKit (Swift, .interoperabilityMode(.Cxx); Phase 4) — depends on ▶ ModernPARCore
+     ArchiveKit (Swift, NO C++ interop — as built in Phase 4) — depends on ▶ ModernPARCore
        ├─ RARExtractor : ArchiveExtractor  → CUnrar
-       ├─ ZipExtractor : ArchiveExtractor  → libarchive
-       ├─ depends on ▶ CUnrar (C / Obj-C++ shim target)
-       │    vendors unrarsrc 7.2.4; catches C++ exceptions, exposes
-       │    POD + const char* + callback fn-ptrs only
-       └─ depends on ▶ CLibArchive (system target → libarchive.2.tbd + headers)
+       ├─ ZipExtractor : ArchiveExtractor  → libarchive (Phase 5)
+       ├─ depends on ▶ CUnrar (C++ target behind an extern "C" umbrella, like Par2Cxx)
+       │    vendors unrarsrc 7.2.4 (3 local patches — vendor/VENDORED.txt);
+       │    unrarshim.{h,cpp} catches all C++ exceptions, exposes
+       │    POD + const char* + callback fn-ptrs only; EXTRACTION/LISTING ONLY
+       └─ depends on ▶ CLibArchive (system target → libarchive.2.tbd + headers; Phase 5)
 ```
 
 ### Target responsibilities
@@ -199,21 +200,19 @@ target directly hurts testability.
 | **ModernPARCore** | Swift | Models, state machine, native parser, native PAR1, protocols, bookmark + settings services. | **No** |
 | **Par2Kit** | Swift | `EmbeddedEngine` (primary — drives `Par2Cxx` via the C shim) + `HelperProcessEngine` (fallback — runs the bundled `par2`, parses output) → `EngineEvent`. Consumes `Par2Cxx` as a plain C module. | **No** (`Par2Cxx`'s umbrella header is `extern "C"`) |
 | **Par2Cxx** *(Phase 2)* | C++ | Vendors par2cmdline-turbo v1.4.0 `src/` + committed `arm64-apple` `config.h`; `Par2Shim.{h,cpp}` catches **all** C++ exceptions, exposes POD/`const char*`/fn-ptr C ABI only. | (C++ contained here) |
-| **ArchiveKit** | Swift | `RARExtractor`, `ZipExtractor`; password/volume/destination logic in Swift around the shims. | **Yes** (`.Cxx`) |
-| **CUnrar** | C / Obj-C++ | Vendors `unrarsrc` 7.2.4; thin shim catching all C++ exceptions, exposing C-only API. | (C++ contained here) |
+| **ArchiveKit** *(Phase 4)* | Swift | `RARExtractor` (`ZipExtractor` in Phase 5); password/volume/destination/placement logic in Swift around the shims. | **No** (`CUnrar`'s umbrella header is `extern "C"`) |
+| **CUnrar** *(Phase 4)* | C++ | Vendors `unrarsrc` 7.2.4 (3 local patches, `vendor/VENDORED.txt`); `unrarshim.{h,cpp}` catches all C++ exceptions, exposes a C-only extraction/listing API (no creation — UnRAR license). | (C++ contained here) |
 | **CLibArchive** | C (systemLibrary) | Module map over `libarchive.2.tbd` + vendored headers. | n/a |
 
-**Quarantine rule (07 Claim 4):** `.interoperabilityMode(.Cxx)` *propagates* to every dependent
-target and that propagation cannot be hidden today (Swift issue #66156 still open). Therefore C++
-interop is confined to **ArchiveKit** and its C shims only. `ModernPARCore` and `ModernPARUI`
-depend on `ArchiveKit`'s **pure-Swift `Sendable` API** but — critically — because of #66156 they
-still need the interop flag set if they link ArchiveKit directly. To keep `ModernPARCore`/`UI`
-genuinely C++-free, **`ArchiveKit` is consumed only through the `ArchiveExtractor` protocol whose
-concretes are injected from the app target / a small adapter**, so the core/UI modules never name
-ArchiveKit's C++-tainted symbols. Notably, **the PAR2 path never needs `.Cxx` interop either**:
-`Par2Cxx` (like `CUnrar`) hides its C++ behind an `extern "C"` umbrella header, so Swift imports it
-as a C module and Par2Kit stays `.Cxx`-free — the only `.interoperabilityMode(.Cxx)` surface in the
-whole project remains ArchiveKit.
+**Quarantine rule (07 Claim 4) — superseded by a stricter as-built outcome (Phase 4):** the
+planned mitigation assumed ArchiveKit would need `.interoperabilityMode(.Cxx)` (whose propagation
+to dependents cannot be hidden — Swift issue #66156). As built, **no target in the project uses
+C++ interop at all**: `CUnrar` (like `Par2Cxx`) hides its C++ behind an `extern "C"` umbrella
+header (`unrarshim.h`), so Swift imports it as a plain C module and ArchiveKit carries no interop
+flag to propagate. The **injection seam stays load-bearing for module hygiene**: `ModernPARCore`
+and `ModernPARUI` never import an engine module — `ArchiveKit` is consumed only through the
+`ArchiveExtractor` protocol whose concretes are injected from the app target, keeping engine and
+license boundaries (GPL turbo vs. UnRAR-licensed CUnrar) visible in the dependency graph.
 
 ---
 

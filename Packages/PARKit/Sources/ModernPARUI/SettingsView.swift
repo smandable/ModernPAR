@@ -25,9 +25,25 @@ public struct SettingsView: View {
                 .foregroundStyle(.secondary).padding()
                 .tabItem { Label("Par2", systemImage: "shield") }
 
-            Text("Unrar options (destination, conflicts, segments) — Phase 7.")
-                .foregroundStyle(.secondary).padding()
-                .tabItem { Label("Unrar", systemImage: "archivebox") }
+            VStack(alignment: .leading, spacing: 12) {
+                Toggle(
+                    "Keep files that fail their checksum (broken files)",
+                    isOn: $settings.keepBrokenFiles)
+                Text("More unrar options (destination, conflicts, segments) — Phase 7.")
+                    .foregroundStyle(.secondary)
+                Divider()
+                // The UnRAR license's attribution obligation: ship this paragraph verbatim
+                // in the app's documentation/acknowledgements. (ARCHITECTURE.md §1.4)
+                ScrollView {
+                    Text(Self.unrarAcknowledgement)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .textSelection(.enabled)
+                }
+            }
+            .padding()
+            .tabItem { Label("Unrar", systemImage: "archivebox") }
 
             Text("Other options (CPU cores, updates) — Phase 7.")
                 .foregroundStyle(.secondary).padding()
@@ -35,4 +51,22 @@ public struct SettingsView: View {
         }
         .frame(width: 480, height: 320)
     }
+
+    /// RAR extraction is powered by RARLAB's UnRAR source (unrarsrc 7.2.4). The second
+    /// paragraph is the license's mandatory attribution text, reproduced VERBATIM starting
+    /// from "UnRAR source code" — do not edit it. (docs/research/05; ARCHITECTURE.md §1.4)
+    static let unrarAcknowledgement = """
+        RAR extraction is powered by the UnRAR utility, copyright © Alexander L. Roshal. \
+        ModernPAR uses UnRAR for extraction only.
+
+        UnRAR source code may be used in any software to handle \
+        RAR archives without limitations free of charge, but cannot be \
+        used to develop RAR (WinRAR) compatible archiver and to \
+        re-create RAR compression algorithm, which is proprietary. \
+        Distribution of modified UnRAR source code in separate form \
+        or as a part of other software is permitted, provided that \
+        full text of this paragraph, starting from "UnRAR source code" \
+        words, is included in license, or in documentation if license \
+        is not available, and in source code comments of resulting package.
+        """
 }
