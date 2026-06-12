@@ -37,7 +37,7 @@
 	<key>SUFeedURL</key>
 	<string>https://github.com/smandable/ModernPAR/releases/latest/download/appcast.xml</string>
 	<key>SUPublicEDKey</key>
-	<string></string>
+	<string>iUAUMJ1cqA+oRcjEQDBIg7dDgecmAvtDpoIhlPw+nRA=</string>
 
 	<key>CFBundleDocumentTypes</key>
 	<array>

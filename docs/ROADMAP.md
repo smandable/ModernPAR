@@ -468,14 +468,22 @@ These are the load-bearing calls that the phases below assume. Each resolves a r
 > supposedly failing library validation on the embedded Sparkle) was refuted by direct
 > launch test. 342 tests green.
 >
-> **Still owner-blocked** (see the Phase 9 credentials checklist handed to Sean): Developer ID
-> Application cert (keychain has only Apple Development + Apple Distribution), notarytool
-> keychain profile + ASC API key, Sparkle EdDSA keypair (`Scripts/sign-update.sh
-> generate-keys`), feed-hosting confirmation (Info.plist pre-points at
-> `releases/latest/download/appcast.xml`), CI secrets, then: cut `v0.1.0`, clean-Mac offline
-> Gatekeeper test, Sparkle end-to-end update test. Deferred niceties: bundling `par2helper`
-> as a fallback-build variant; legal review before the first public release (top item:
-> GPL app + UnRAR-licensed component coexistence).
+> **Local credentials COMPLETE (2026-06-12): the first notarized, stapled DMG exists.**
+> Developer ID Application cert created (Xcode ▸ Manage Certificates; note: Saddle never
+> needed one locally — it ships via Xcode Organizer's cloud-managed Developer ID signing,
+> whose key never enters the keychain). notarytool keychain profile "ModernPAR-Notary"
+> stored + validated; Sparkle EdDSA keypair generated (private key in Sean's login
+> keychain; public key committed in Info.plist — the updater gate is now LIVE). Full
+> `Scripts/release.sh` run: app notarization Accepted, DMG notarization Accepted, both
+> stapled, `spctl` says "accepted — source=Notarized Developer ID" for both.
+>
+> **Still open before `v0.1.0`:** the five GitHub release secrets (export the Sparkle key
+> with `Scripts/sign-update.sh generate-keys -x <file>`; cert as .p12; ASC API key trio),
+> feed-hosting confirmation (Info.plist points at `releases/latest/download/appcast.xml`;
+> the feed 404s harmlessly until the first release publishes), clean-Mac offline Gatekeeper
+> test of the DMG, Sparkle end-to-end update test (needs a second version to update to).
+> Deferred niceties: bundling `par2helper` as a fallback-build variant; legal review before
+> the first public release (top item: GPL app + UnRAR-licensed component coexistence).
 
 **Goal.** A notarized, stapled, auto-updating DMG users can install and keep for years.
 
