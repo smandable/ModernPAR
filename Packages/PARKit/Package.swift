@@ -14,6 +14,9 @@ let par2CxxDefines: [String] = [
 
 let package = Package(
     name: "PARKit",
+    // Localization scaffolding (ROADMAP Phase 8): English first; String Catalogs slot in
+    // per-target as translations arrive.
+    defaultLocalization: "en",
     platforms: [.macOS(.v14)],  // deployment floor; the app target may raise it
     products: [
         .library(name: "ModernPARUI", targets: ["ModernPARUI"]),

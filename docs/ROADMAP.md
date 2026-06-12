@@ -381,6 +381,38 @@ These are the load-bearing calls that the phases below assume. Each resolves a r
 
 **Goal.** Remove the last Intel-only dependency by implementing PAR1 recovery natively; final UX polish.
 
+> **Status: DONE (2026-06-12).** PAR1 is fully native — verify, repair, AND create — with the
+> math pinned EMPIRICALLY against the original Intel `par` binary: `GF256`/`Par1RS`
+> (polynomial 0x11D, volume `v`'s coefficient for 1-based in-set file `j` = `j^(v-1)`,
+> zero-padding to the largest ROSTER file, index sorted lexicographically — every constant
+> proven by byte-comparing computed parity against a new golden corpus of 8 oracle-generated
+> sets, 19 volumes, including unicode rosters, an empty file, non-contributing `+i` entries,
+> and the volume-sizing quirk). `Par1Engine` streams the same `EngineEvent`s as the PAR2
+> engines (an `EngineRouter` dispatches on the anchor's form, so call sites still inject ONE
+> engine): MD5 verify with renamed-file detection, set-level recoverability (4/4A "need N
+> more files", 4B "Cannot restore." for the spec's singular-submatrix flaw), chunked RS
+> repair with `.1` backups and MD5-verified, atomically-placed output, fix-faulty-filenames,
+> Pnn introspection log lines, and retry that skips this session's already-OK files (size
+> revalidated). `Par1CreateEngine` authors `.par` + lowercase `.pNN` byte-identical in parity
+> to the Intel binary, which verifies our sets clean (`par c`, exit 0 — exercised for real in
+> a local-only test); the build window gained a PAR1 mode (File ▸ New PAR 1 Set) honoring the
+> Par1 Settings tab. Polish: "Canceled." (DocStatus3) survives on screen, DocStatus 6/8,
+> 10, 13/14 complete, Finder-style numeric filename sort (hand-rolled comparator —
+> `localizedStandardCompare` broke the 32k-row scale budget), RAR `.001` splits and SFX
+> `.exe` first-file forms (signature-sniffed routing), "Overwrite All" conflict answer
+> (per-run, broker-cached), in-app Help window (⌘?), `defaultLocalization` scaffolding, and
+> a CI gate asserting every Mach-O in the bundle is arm64-only (verified locally too: `lipo
+> -archs` = arm64 everywhere, no Intel helper was ever bundled). The 15-agent adversarial
+> review confirmed 6 distinct findings (mediums: a crafted volumeNumber trapping the app, a
+> directory squatting on a roster name recursively DELETED by repair — now moved aside as a
+> backup, create-failure cleanup deleting files it never created — now exclusive-create +
+> created-list, render-path file I/O for sniffed anchors — now cached on the session; lows:
+> a comparator strict-weak-ordering cycle on fullwidth digits, an unfiltered rename scan,
+> whole-file volume discovery — now a streaming probe) — all fixed with regression tests;
+> 2 findings refuted (one by a runtime probe of Foundation's fd-limit behavior). 331 tests
+> green. Deferred: PAR1 verify-anchor whole-file read at open (low; repair already streams),
+> resumable-after-cancel create, localization beyond English scaffolding.
+
 **Tasks.**
 - Pure-Swift PAR1 verify/recover: GF(2^8) RS over ≤255 files (gopar's BSD PAR1 code is a clean reference). Whole-file byte-parallel RS; parity volumes sized to the largest input. Wire into the existing session/status UI.
 - PAR1 Pnn introspection states (`PxxFileStatus1–7`), "did not contribute to parity" file class, fix-faulty-filenames.

@@ -49,15 +49,25 @@ extension DocStatus {
     var label: String {
         switch self {
         case .waitingToStart: return "Waiting to start"
+        case .cancelled: return "Canceled."
+        case .newParFileNeeded: return "New PAR file should be generated."
         case .checking: return "Verifying the files…"
         case .allFilesOK: return "All files checked out fine."
+        case .allFilesOKWithRenames:
+            return "All files checked out fine; one or more files were renamed."
         case .repairing: return "Restoring files…"
         case .restoredSuccessfully: return "Files restored successfully."
         case .restoredWithRenames: return "Files restored successfully; one or more were renamed."
         case .repairNeeded: return "Damage found — repair is possible."
         case .needMoreRecovery(let b):
             return "Cannot restore; need \(b) more recovery block\(b == 1 ? "" : "s")."
+        case .needMoreFiles(let n):
+            return n == 1
+                ? "Cannot restore; need one more file." : "Cannot restore; need \(n) more files."
+        case .cannotRestore: return "Cannot restore."
         case .onlyNonRecoverableMissing: return "Only non-recoverable files are missing."
+        case .onlyNonRecoverableMissingWithRenames:
+            return "Only non-recoverable files are missing; one or more files were renamed."
         case .notValid: return "The PAR file is not valid."
         case .internalError: return "An internal error occurred during processing."
         case .extracting: return "Extracting files…"

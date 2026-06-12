@@ -71,10 +71,12 @@ public struct UIConflictResolver: ConflictResolver {
                 "The destination folder already contains an item with this name. Overwrite moves the existing item to the Trash."
             alert.addButton(withTitle: "Keep Both")
             alert.addButton(withTitle: "Overwrite")
+            alert.addButton(withTitle: "Overwrite All")
             alert.addButton(withTitle: "Cancel")
             switch alert.runModal() {
             case .alertFirstButtonReturn: return .keepBoth
             case .alertSecondButtonReturn: return .overwrite
+            case .alertThirdButtonReturn: return .overwriteAll
             default: return .cancel
             }
         }

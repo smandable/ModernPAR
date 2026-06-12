@@ -10,13 +10,28 @@ import UniformTypeIdentifiers
 struct CreateSetView: View {
     @Environment(AppModel.self) private var model
     @Bindable var session: OperationSession
-    @State private var create = CreateModel()
+    @State private var create: CreateModel
     @State private var selection: Set<URL> = []
     @State private var outputName: String = ""
     @State private var showOutput = true
-    /// A new create window starts from the Par2 tab's persisted defaults — applied once,
-    /// then the window's own knobs take over. (doc-01 §5.3; ROADMAP Phase 7)
+    /// A new create window starts from the matching Settings tab's persisted defaults —
+    /// applied once, then the window's own knobs take over. (doc-01 §5.2/§5.3)
     @State private var seededFromSettings = false
+
+    init(session: OperationSession, kind: ParKind = .par2) {
+        self.session = session
+        _create = State(initialValue: CreateModel(kind: kind))
+    }
+
+    private var isPar1: Bool { create.kind == .par1 }
+
+    /// The original's DocStatus10: files are staged but nothing has been written yet.
+    private var displayStatus: DocStatus {
+        if session.docStatus == .waitingToStart, !create.items.isEmpty {
+            return .newParFileNeeded
+        }
+        return session.docStatus
+    }
 
     var body: some View {
         @Bindable var create = create
@@ -30,15 +45,21 @@ struct CreateSetView: View {
             }
             Divider()
             StatusBar(
-                docStatus: session.docStatus, progress: session.progress,
+                docStatus: displayStatus, progress: session.progress,
                 isBusy: session.isBusy, onCancel: { session.cancel() })
         }
         .frame(minWidth: 560, minHeight: 460)
-        .navigationTitle("New PAR Set")
+        .navigationTitle(isPar1 ? "New PAR 1 Set" : "New PAR 2 Set")
         .onAppear {
             guard !seededFromSettings else { return }
             seededFromSettings = true
-            create.options = model.settings.par2CreateOptions
+            if isPar1 {
+                create.par1VolumeMode = model.settings.par1VolumeMode
+                create.par1FilesPerVolume = model.settings.par1FilesPerVolume
+                create.par1FixedVolumeCount = model.settings.par1FixedVolumeCount
+            } else {
+                create.options = model.settings.par2CreateOptions
+            }
         }
         .focusedSceneValue(\.activeSession, session)
         .dropDestination(for: URL.self) { urls, _ in
@@ -88,7 +109,8 @@ struct CreateSetView: View {
                 }
                 .keyboardShortcut("s", modifiers: [.command, .shift])
                 .disabled(session.isBusy || !create.canCreate)
-                .help("Create the PAR2 recovery set (⇧⌘S)")
+                .help(
+                    isPar1 ? "Create the PAR1 recovery set" : "Create the PAR2 recovery set (⇧⌘S)")
             }
         }
     }
@@ -131,30 +153,11 @@ struct CreateSetView: View {
                         .frame(maxWidth: 220)
                         .disabled(session.isBusy)
                 }
-                Stepper(
-                    value: $create.options.redundancyPercent,
-                    in: CreateOptions.redundancyRange
-                ) {
-                    LabeledContent("Redundancy", value: "\(create.options.redundancyPercent)%")
+                if isPar1 {
+                    par1Options(create: $create)
+                } else {
+                    par2Options(create: $create)
                 }
-                .disabled(session.isBusy)
-
-                Picker("Block size", selection: blockSizeMode) {
-                    Text("Automatic").tag(BlockSizeMode.automatic)
-                    Text("Manual (KB)").tag(BlockSizeMode.manual)
-                }
-                .disabled(session.isBusy)
-                if case .manual = blockSizeMode.wrappedValue {
-                    TextField("KB", value: manualKilobytes, format: .number)
-                        .frame(maxWidth: 120)
-                        .disabled(session.isBusy)
-                }
-
-                Picker("Recovery files", selection: $create.options.fileScheme) {
-                    Text("Limit to largest data file").tag(CreateOptions.FileScheme.limitToLargest)
-                    Text("Uniform size").tag(CreateOptions.FileScheme.uniform)
-                }
-                .disabled(session.isBusy)
             }
 
             if !create.items.isEmpty {
@@ -164,11 +167,19 @@ struct CreateSetView: View {
                         value:
                             "\(create.items.count) file(s), \(create.totalBytes.formatted(.byteCount(style: .file)))"
                     )
-                    LabeledContent(
-                        "Blocks",
-                        value:
-                            "\(create.sourceBlockCount) source + \(create.recoveryBlockCount) recovery · \(create.effectiveBlockSize.formatted(.byteCount(style: .file))) block"
-                    )
+                    if isPar1 {
+                        LabeledContent(
+                            "Parity",
+                            value:
+                                "\(create.par1VolumeCount) volume(s), each \(((create.items.map(\.sizeBytes).max() ?? 0)).formatted(.byteCount(style: .file)))"
+                        )
+                    } else {
+                        LabeledContent(
+                            "Blocks",
+                            value:
+                                "\(create.sourceBlockCount) source + \(create.recoveryBlockCount) recovery · \(create.effectiveBlockSize.formatted(.byteCount(style: .file))) block"
+                        )
+                    }
                 }
             }
 
@@ -180,6 +191,55 @@ struct CreateSetView: View {
             }
         }
         .formStyle(.grouped)
+    }
+
+    @ViewBuilder
+    private func par2Options(create: Bindable<CreateModel>) -> some View {
+        Stepper(
+            value: create.options.redundancyPercent,
+            in: CreateOptions.redundancyRange
+        ) {
+            LabeledContent("Redundancy", value: "\(self.create.options.redundancyPercent)%")
+        }
+        .disabled(session.isBusy)
+
+        Picker("Block size", selection: blockSizeMode) {
+            Text("Automatic").tag(BlockSizeMode.automatic)
+            Text("Manual (KB)").tag(BlockSizeMode.manual)
+        }
+        .disabled(session.isBusy)
+        if case .manual = blockSizeMode.wrappedValue {
+            TextField("KB", value: manualKilobytes, format: .number)
+                .frame(maxWidth: 120)
+                .disabled(session.isBusy)
+        }
+
+        Picker("Recovery files", selection: create.options.fileScheme) {
+            Text("Limit to largest data file").tag(CreateOptions.FileScheme.limitToLargest)
+            Text("Uniform size").tag(CreateOptions.FileScheme.uniform)
+        }
+        .disabled(session.isBusy)
+    }
+
+    /// The original's SaveOptions panel: Pnn count from the file count, or fixed.
+    /// (doc-01 §5.2/§6; ROADMAP Phase 8)
+    @ViewBuilder
+    private func par1Options(create: Bindable<CreateModel>) -> some View {
+        Picker("Number of Pnn files", selection: create.par1VolumeMode) {
+            Text("Based on the number of files")
+                .tag(ModernPARCore.Settings.Par1VolumeMode.byFileCount)
+            Text("Fixed number").tag(ModernPARCore.Settings.Par1VolumeMode.fixed)
+        }
+        .disabled(session.isBusy)
+        if self.create.par1VolumeMode == .byFileCount {
+            TextField("Files per Pnn volume", value: create.par1FilesPerVolume, format: .number)
+                .frame(maxWidth: 120)
+                .disabled(session.isBusy)
+        } else {
+            TextField("Pnn volumes", value: create.par1FixedVolumeCount, format: .number)
+                .frame(maxWidth: 120)
+                .disabled(session.isBusy)
+        }
     }
 
     // MARK: - Block-size binding glue
@@ -225,7 +285,7 @@ struct CreateSetView: View {
 
     private func runCreate() {
         guard create.canCreate, let folder = create.folder,
-            let creator = model.par2Creator
+            let creator = model.creator(for: create.kind)
         else { return }
 
         // Acquire read-write access covering the source folder. A remembered grant may be the
@@ -249,14 +309,16 @@ struct CreateSetView: View {
             create.makeRequest(parFile: parFile, folderBookmark: folderBookmark), using: creator)
     }
 
-    /// The output file name as a `.par2`, defaulting to the set's folder/first-file name.
+    /// The output file name as a `.par2`/`.par`, defaulting to the set's folder/first-file
+    /// name.
     private func sanitizedParName() -> String {
+        let ext = isPar1 ? ".par" : ".par2"
         var base = outputName.trimmingCharacters(in: .whitespacesAndNewlines)
         if base.isEmpty { base = create.defaultParName }
-        // Single safe path component, always `.par2`.
+        // Single safe path component, always the kind's extension.
         base = (base as NSString).lastPathComponent
-        if base.lowercased().hasSuffix(".par2") {
-            base = String(base.dropLast(5))
+        for suffix in [".par2", ".par"] where base.lowercased().hasSuffix(suffix) {
+            base = String(base.dropLast(suffix.count))
         }
         // Reject names that reduce to nothing meaningful (".", "..", "/", all-dots, hidden)
         // so we never produce ".par2" or "..par2" in the user's folder.
@@ -265,7 +327,7 @@ struct CreateSetView: View {
         if base.trimmingCharacters(in: CharacterSet(charactersIn: ". /")).isEmpty {
             base = "recovery"
         }
-        return base + ".par2"
+        return base + ext
     }
 }
 

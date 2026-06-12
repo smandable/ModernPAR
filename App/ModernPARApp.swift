@@ -17,8 +17,11 @@ struct ModernPARApp: App {
     /// unrarshim for archive extraction (Phase 4). Preferences reach the extractors by value
     /// in `ExtractOptions`, captured on the main actor at run start (ROADMAP Phase 7).
     @State private var model = AppModel(
-        par2Engine: EmbeddedEngine(),
+        // One injected engine, routed by anchor form: PAR2 → embedded turbo, PAR1 → the
+        // native Swift engine (Phase 8 — no Intel binary anywhere).
+        par2Engine: EngineRouter(par2: EmbeddedEngine(), par1: Par1Engine()),
         par2Creator: EmbeddedEngine(),
+        par1Creator: Par1CreateEngine(),
         archiveExtractor: RARExtractor(),
         zipExtractor: ZipExtractor())
 
@@ -44,5 +47,10 @@ struct ModernPARApp: App {
             SettingsView()
                 .environment(model)
         }
+
+        Window("ModernPAR Help", id: "modernpar-help") {
+            HelpView()
+        }
+        .windowResizability(.contentSize)
     }
 }

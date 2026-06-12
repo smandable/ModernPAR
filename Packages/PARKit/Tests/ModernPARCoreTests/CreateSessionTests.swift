@@ -88,7 +88,7 @@ struct CreateSessionTests {
         #expect(session.isBusy)
         session.cancel()
         #expect(!session.isBusy)
-        #expect(session.docStatus == .waitingToStart)
+        #expect(session.docStatus == .cancelled)
     }
 
     // MARK: - CreateModel

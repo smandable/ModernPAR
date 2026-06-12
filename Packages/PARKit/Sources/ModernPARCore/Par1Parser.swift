@@ -151,6 +151,19 @@ public enum Par1Parser {
         )
     }
 
+    /// The file's data area: parity bytes for a `.pNN` volume, the Unicode comment for the
+    /// index. Bounds-checked against the untrusted header fields; nil when they lie.
+    /// (Phase 8: the native engine reads volume parity through this.)
+    public static func dataArea(_ data: Data) -> Data? {
+        guard data.count >= headerLength,
+            let dataOffset = data.leUInt64(at: 0x50),
+            let dataSize = data.leUInt64(at: 0x58),
+            dataOffset <= UInt64(data.count),
+            dataSize <= UInt64(data.count) - dataOffset
+        else { return nil }
+        return data.field(at: Int(dataOffset), count: Int(dataSize))
+    }
+
     private static func trimTrailingZeroPairs(_ data: Data) -> Data {
         var end = data.count - (data.count % 2)
         let base = data.startIndex

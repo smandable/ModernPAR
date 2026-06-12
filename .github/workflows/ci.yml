@@ -32,5 +32,25 @@ jobs:
             CODE_SIGN_IDENTITY="-" CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=NO \
             clean build
 
+      # Phase 8 exit criterion: no x86_64 slice and no bundled Intel helper anywhere —
+      # every Mach-O in the bundle must be arm64-only.
+      - name: Verify arm64-only bundle
+        run: |
+          APP="build/Build/Products/Debug/ModernPAR.app"
+          # Guard against path drift: a missing bundle must FAIL, not pass vacuously.
+          test -d "$APP" || { echo "app bundle not found at $APP"; exit 1; }
+          STATUS=0
+          CHECKED=0
+          while IFS= read -r -d '' f; do
+            if file -b "$f" | grep -q "Mach-O"; then
+              ARCHS=$(lipo -archs "$f" 2>/dev/null || true)
+              echo "$f: ${ARCHS:-unreadable}"
+              if [ "$ARCHS" != "arm64" ]; then STATUS=1; fi
+              CHECKED=$((CHECKED+1))
+            fi
+          done < <(find "$APP" -type f -print0)
+          test "$CHECKED" -gt 0 || { echo "no Mach-O files inspected"; exit 1; }
+          exit $STATUS
+
   # Developer-ID signing + notarization runs only on tag pushes (not PRs). Defined in the
   # build/distribution track; see docs/research/06-build-distribution.md.

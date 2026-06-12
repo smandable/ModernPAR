@@ -25,7 +25,30 @@ public final class CreateModel {
     /// The most recent rejection reason for an add attempt (cleared on a successful add).
     public private(set) var lastRejection: String?
 
-    public init() {}
+    /// Which format this window authors. PAR2 uses `options`; PAR1 uses the volume knobs
+    /// below (the original's SaveOptions panel; ROADMAP Phase 8).
+    public let kind: ParKind
+    /// How the PAR1 volume count is derived (doc-01 §5.2; seeded from the Par1 Settings tab).
+    public var par1VolumeMode: Settings.Par1VolumeMode = .byFileCount
+    /// "Number of files per Pnn" when deriving by file count. 1…99.
+    public var par1FilesPerVolume = 10
+    /// The fixed Pnn count, independent of the number of files. 0…99.
+    public var par1FixedVolumeCount = 9
+
+    public init(kind: ParKind = .par2) {
+        self.kind = kind
+    }
+
+    /// The PAR1 volume count the current knobs produce.
+    public var par1VolumeCount: Int {
+        switch par1VolumeMode {
+        case .fixed:
+            return par1FixedVolumeCount
+        case .byFileCount:
+            guard !items.isEmpty, par1FilesPerVolume > 0 else { return 0 }
+            return (items.count + par1FilesPerVolume - 1) / par1FilesPerVolume
+        }
+    }
 
     /// The single folder every source file must live in (nil when empty).
     public var folder: URL? { items.first?.url.deletingLastPathComponent() }
@@ -93,15 +116,52 @@ public final class CreateModel {
     }
 
     public var validationErrors: [String] {
-        options.validationErrors(fileSizes: fileSizes)
+        switch kind {
+        case .par2:
+            return options.validationErrors(fileSizes: fileSizes)
+        case .par1:
+            return par1ValidationErrors
+        }
     }
     public var canCreate: Bool { !items.isEmpty && validationErrors.isEmpty }
 
-    /// Builds the engine request for an output `.par2` URL in the source folder.
+    /// PAR1 validation, mirroring the originals' wording (doc-01 §5.2: `WrongNumPARErr`,
+    /// `WrongNumFilesPerPARErr`, `TooManyFilesForPar1Err`).
+    private var par1ValidationErrors: [String] {
+        var errors: [String] = []
+        if items.isEmpty {
+            errors.append("Add at least one file to protect.")
+        }
+        if items.count > 255 {
+            errors.append("A PAR1 set can protect at most 255 files.")
+        }
+        switch par1VolumeMode {
+        case .fixed:
+            if !(0...99).contains(par1FixedVolumeCount) {
+                errors.append("The number of Pnn files must be a number between 0 and 99")
+            }
+        case .byFileCount:
+            if !(1...99).contains(par1FilesPerVolume) {
+                errors.append("The number of files must be a number between 1 and 99")
+            }
+        }
+        let volumes = par1VolumeCount
+        if volumes > 99 {
+            errors.append("A PAR1 set allows at most 99 parity volumes (.p01–.p99).")
+        } else if items.count + volumes > Par1RS.maxEntities {
+            errors.append(
+                "Files plus parity volumes cannot exceed \(Par1RS.maxEntities) (a PAR1 format limit)."
+            )
+        }
+        return errors
+    }
+
+    /// Builds the engine request for an output `.par2`/`.par` URL in the source folder.
     public func makeRequest(parFile: URL, folderBookmark: Data?) -> CreateRequest {
         CreateRequest(
             parFile: parFile, files: items.map(\.url), options: options,
-            folderBookmark: folderBookmark)
+            folderBookmark: folderBookmark,
+            par1VolumeCount: kind == .par1 ? par1VolumeCount : nil)
     }
 
     // MARK: - Helpers

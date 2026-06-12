@@ -31,10 +31,16 @@ public struct ModernPARCommands: Commands {
             }
             .keyboardShortcut("o")
 
-            Button("Create PAR Set…") {
+            Button("New PAR 2 Set") {
                 openWindow(value: SessionRoute(mode: .createSet))
             }
             .keyboardShortcut("s", modifiers: [.command, .shift])
+
+            // PAR1 authoring rides the native RS engine (ROADMAP Phase 8; the original's
+            // onNewPar1:).
+            Button("New PAR 1 Set") {
+                openWindow(value: SessionRoute(mode: .createSet, createsPar1: true))
+            }
 
             Button("Extract Archive…") {
                 if let url = OpenArchivePanel.present() {
@@ -76,14 +82,23 @@ public struct ModernPARCommands: Commands {
             }
             .disabled(par2CommandsUnavailable)
         }
+
+        // In-app help instead of a Help book (ROADMAP Phase 8).
+        CommandGroup(replacing: .help) {
+            Button("ModernPAR Help") {
+                openWindow(id: "modernpar-help")
+            }
+            .keyboardShortcut("?", modifiers: .command)
+        }
     }
 
     /// Verify/Repair require a non-archive anchor and an idle session — running the PAR2
     /// engine against a .rar/.zip anchor (e.g. after a chained extraction moved the anchor to
-    /// the payload) is never meaningful and would wipe the extraction results.
+    /// the payload) is never meaningful and would wipe the extraction results. Reads the
+    /// session's cached flag: menu validation must never sniff file bytes. (Phase 8 review)
     private var par2CommandsUnavailable: Bool {
-        guard let session = activeSession, let anchor = session.anchorURL, !session.isBusy
+        guard let session = activeSession, session.anchorURL != nil, !session.isBusy
         else { return true }
-        return ArchiveFileTypes.isArchive(anchor)
+        return session.anchorIsArchive
     }
 }

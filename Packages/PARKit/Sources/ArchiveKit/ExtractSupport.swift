@@ -85,6 +85,9 @@ final class PasswordBroker: @unchecked Sendable {
 final class ConflictBroker: @unchecked Sendable {
     private let resolver: any ConflictResolver
     private let token: ExtractCancelToken
+    /// "Overwrite All" answers every later conflict in THIS run without another dialog
+    /// (the original's overwrite-all option; ROADMAP Phase 8 polish).
+    private let rememberedOverwrite = ValueBox<Bool>(false)
 
     init(resolver: any ConflictResolver, token: ExtractCancelToken) {
         self.resolver = resolver
@@ -92,6 +95,7 @@ final class ConflictBroker: @unchecked Sendable {
     }
 
     func resolveSync(conflictAt url: URL) -> ConflictPolicy {
+        if rememberedOverwrite.get() { return .overwrite }
         if token.isCancelled { return .cancel }  // never raise a dialog for a dead run
         let semaphore = DispatchSemaphore(value: 0)
         let box = ValueBox<ConflictPolicy>(.cancel)
@@ -103,8 +107,12 @@ final class ConflictBroker: @unchecked Sendable {
         while semaphore.wait(timeout: .now() + .milliseconds(100)) == .timedOut {
             if token.isCancelled { return .cancel }
         }
-        // `.ask` is an input policy, not a decision — treat it as a refusal.
         let decision = box.get()
+        if decision == .overwriteAll {
+            rememberedOverwrite.set(true)
+            return .overwrite
+        }
+        // `.ask` is an input policy, not a decision — treat it as a refusal.
         return decision == .ask ? .cancel : decision
     }
 }

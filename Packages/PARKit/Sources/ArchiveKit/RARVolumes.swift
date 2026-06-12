@@ -2,9 +2,18 @@ import Foundation
 
 /// Pure logic for RAR volume naming and output placement — no engine, fully unit-testable.
 ///
-/// First-file forms in scope for Phase 4 (ROADMAP): `name.rar` (+ old-style `name.rNN`
-/// continuations) and `name.partNN.rar`. (`.001` splits and SFX `.exe` are v1/later.)
+/// First-file forms (ROADMAP Phase 4, completed in Phase 8): `name.rar` (+ old-style
+/// `name.rNN` continuations), `name.partNN.rar`, numeric splits `name.001`/`name.002`…
+/// (the engine advances trailing digits itself), and SFX `name.exe` (the engine scans past
+/// the stub).
 enum RARVolumes {
+
+    /// `archive.003` → 3. Three numeric digits, any value (`.000` exists in the wild).
+    static func numericSplitNumber(_ filename: String) -> Int? {
+        let ext = (filename as NSString).pathExtension
+        guard ext.count == 3, ext.allSatisfy(\.isNumber) else { return nil }
+        return Int(ext)
+    }
 
     /// `archive.part02.rar` → (stem `archive`, part 2). Case-insensitive.
     static func parsePartName(_ filename: String) -> (stem: String, part: Int)? {
@@ -73,6 +82,23 @@ enum RARVolumes {
                 }
             }
         }
+        if let number = numericSplitNumber(filename), number != 1 {
+            // `archive.005` → the sibling with the LOWEST split number starts the set.
+            let stem = ((filename as NSString).deletingPathExtension).lowercased()
+            guard
+                let siblings = try? FileManager.default.contentsOfDirectory(
+                    at: folder, includingPropertiesForKeys: nil, options: [])
+            else { return url }
+            var best: (number: Int, url: URL)?
+            for sibling in siblings {
+                guard let n = numericSplitNumber(sibling.lastPathComponent),
+                    ((sibling.lastPathComponent as NSString).deletingPathExtension).lowercased()
+                        == stem
+                else { continue }
+                if best == nil || n < best!.number { best = (n, sibling) }
+            }
+            return best?.url ?? url
+        }
         return url
     }
 
@@ -93,6 +119,10 @@ enum RARVolumes {
             let partOne = String(repeating: "0", count: max(0, width - 1)) + "1"
             return "\(part.stem).part\(partOne).rar"
         }
+        if let number = numericSplitNumber(filename), number > 1 {
+            // firstVolume(for:) found no lower-numbered sibling — `.001` is missing.
+            return (filename as NSString).deletingPathExtension + ".001"
+        }
         return nil
     }
 
@@ -108,6 +138,10 @@ enum RARVolumes {
         let name = candidate.lastPathComponent
         let setStem = baseName(for: firstVolume).lowercased()
         if let part = parsePartName(name) { return part.stem.lowercased() == setStem }
+        if numericSplitNumber(name) != nil, numericSplitNumber(firstVolume.lastPathComponent) != nil
+        {
+            return ((name as NSString).deletingPathExtension).lowercased() == setStem
+        }
         if isOldStyleContinuation(name) || name.lowercased().hasSuffix(".rar") {
             return ((name as NSString).deletingPathExtension).lowercased() == setStem
         }

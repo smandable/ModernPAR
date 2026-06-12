@@ -31,7 +31,7 @@ public struct SetWindow: View {
             // host the Finder open-with handler too — claimed documents open proper
             // verify/extract windows; a create window never ingests a .par2 itself.
             // (Phase 7 review)
-            CreateSetView(session: session)
+            CreateSetView(session: session, kind: route?.createsPar1 == true ? .par1 : .par2)
                 .environment(model)
                 .background(
                     OpenFilesClaimant(
@@ -267,9 +267,10 @@ public struct SetWindow: View {
 
     /// Whether this window is currently showing an archive extraction. The session's anchor
     /// wins over the route mode: window content can change after creation (a PAR set opened
-    /// into a Cmd-U window must get Verify/Repair back, and vice versa).
+    /// into a Cmd-U window must get Verify/Repair back, and vice versa). Reads the session's
+    /// CACHED flag — this runs in the view body, and the .001/SFX forms sniff file bytes.
     private var isArchiveSession: Bool {
-        if let anchor = session.anchorURL { return ArchiveFileTypes.isArchive(anchor) }
+        if session.anchorURL != nil { return session.anchorIsArchive }
         return route?.mode == .extractArchive
     }
 

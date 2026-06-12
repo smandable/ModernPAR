@@ -24,7 +24,7 @@ public enum PostProcessor {
     @discardableResult
     public static func apply(session: OperationSession, model: AppModel, manual: Bool) -> Outcome {
         guard !session.isBusy, let anchor = session.anchorURL,
-            !ArchiveFileTypes.isArchive(anchor)
+            !session.anchorIsArchive
         else { return .none }
         let names = session.rows.map(\.name)
         guard let match = model.settings.postProcessRules.firstMatch(in: names) else {

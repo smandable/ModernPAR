@@ -114,10 +114,13 @@ struct Phase3Tests {
             events: [.docStatusChanged(.repairing)], holdsOpen: true)
         let session = OperationSession()
         session.start(SessionRoute(mode: .verifyRepair), engine: engine)
-        try await Task.sleep(for: .milliseconds(100))
+        // Poll, don't sleep-and-hope: a fixed delay flakes when the suite runs under load.
+        for _ in 0..<200 where session.docStatus != .repairing {
+            try await Task.sleep(for: .milliseconds(25))
+        }
         #expect(session.docStatus == .repairing)
         session.cancel()
-        #expect(session.docStatus == .waitingToStart)
+        #expect(session.docStatus == .cancelled)
         #expect(!session.isBusy)
     }
 

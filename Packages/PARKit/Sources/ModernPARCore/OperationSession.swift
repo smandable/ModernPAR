@@ -40,6 +40,10 @@ public final class OperationSession {
     public private(set) var anchorURL: URL?
     /// Where extraction placed its output (ROADMAP Phase 4) — powers "Show in Finder".
     public private(set) var placedURL: URL?
+    /// Whether the anchor is an archive (.rar/.zip/.001/SFX) — resolved ONCE when the anchor
+    /// is set. The `.001`/`.exe` forms sniff file bytes, and the toolbar/menus read this on
+    /// every render — they must never do file I/O in the view body. (Phase 8 review)
+    public private(set) var anchorIsArchive = false
     /// The terminal error of the last run, if it failed — the UI reacts to extraction's
     /// `.badPassword` / `.passwordNeeded` by re-prompting and re-running.
     public private(set) var lastError: EngineError?
@@ -61,6 +65,60 @@ public final class OperationSession {
 
     /// Fast id → index map kept in sync with `rows` so batch application stays O(events), not O(n²).
     private var indexByID: [UUID: Int] = [:]
+
+    /// Finder-style name sort for the file table (the original's `.sit.2` < `.sit.10`):
+    /// case-insensitive with digit runs compared numerically. Hand-rolled over precomputed
+    /// lowercased scalar keys — `localizedStandardCompare` costs seconds at the 32 768-row
+    /// PAR2 scale (locale machinery per comparison) and broke the scale budget.
+    nonisolated static func displaySorted(_ files: [FileEntry]) -> [FileEntry] {
+        let keyed = files.map { (entry: $0, key: Array($0.name.lowercased().unicodeScalars)) }
+        return keyed.sorted { numericAwareLess($0.key, $1.key) }.map(\.entry)
+    }
+
+    /// Lexicographic over a TOKEN stream: a digit run is one token ordered by (magnitude,
+    /// digits, padding); any digit token sorts before any non-digit scalar. Classifying
+    /// digit-vs-non-digit FIRST (never by raw scalar value) is what makes this a strict
+    /// weak ordering — fullwidth digits (U+FF10…) have scalar values above ASCII letters
+    /// and the mixed rule produced sort cycles. (Phase 8 review)
+    nonisolated private static func numericAwareLess(
+        _ a: [UnicodeScalar], _ b: [UnicodeScalar]
+    ) -> Bool {
+        var i = 0
+        var j = 0
+        while i < a.count, j < b.count {
+            let aDigit = a[i].properties.numericType == .decimal
+            let bDigit = b[j].properties.numericType == .decimal
+            if aDigit != bDigit { return aDigit }
+            if aDigit {
+                var ea = i
+                var eb = j
+                while ea < a.count, a[ea].properties.numericType == .decimal { ea += 1 }
+                while eb < b.count, b[eb].properties.numericType == .decimal { eb += 1 }
+                var ia = i
+                var jb = j
+                while ia < ea, a[ia] == "0" { ia += 1 }
+                while jb < eb, b[jb] == "0" { jb += 1 }
+                // Magnitude (stripped length), then digit-wise, then less padding first
+                // ("a1" before "a01", Finder's tie-break).
+                if ea - ia != eb - jb { return ea - ia < eb - jb }
+                var x = ia
+                var y = jb
+                while x < ea {
+                    if a[x] != b[y] { return a[x].value < b[y].value }
+                    x += 1
+                    y += 1
+                }
+                if ea - i != eb - j { return ea - i < eb - j }
+                i = ea
+                j = eb
+                continue
+            }
+            if a[i] != b[j] { return a[i].value < b[j].value }
+            i += 1
+            j += 1
+        }
+        return a.count - i < b.count - j
+    }
     private var task: Task<Void, Never>?
 
     public init() {}
@@ -88,6 +146,12 @@ public final class OperationSession {
     public func startVerify(using engine: any PAR2Engine, autoRepair: Bool = true) {
         guard let anchorURL else { return }
         var route = SessionRoute(mode: .verifyRepair, autoRepair: autoRepair)
+        // Retry remembers this session's already-OK PAR1 files and skips re-hashing them —
+        // collected BEFORE start() resets the rows. (ROADMAP Phase 8 exit criterion)
+        if parSet?.kind == .par1 {
+            let sticky = rows.filter { $0.status.isTerminalOK }.map(\.name)
+            if !sticky.isEmpty { route.assumeVerifiedNames = sticky }
+        }
         mintBookmarks(into: &route, anchor: anchorURL)
         start(route, engine: engine)
     }
@@ -142,11 +206,10 @@ public final class OperationSession {
         // state must be restored here — otherwise the spinner sticks at busy/checking forever.
         if isBusy {
             setBusy(false)
-            if docStatus == .checking || docStatus == .repairing || docStatus == .extracting
-                || docStatus == .creating
-            {
-                docStatus = .waitingToStart
-            }
+            // The original's DocStatus3 — "Canceled." stays on screen, not a silent reset.
+            // Unconditional while busy: a queued run cancelled before its engine claimed a
+            // status is still a cancelled run. (ROADMAP Phase 8 polish)
+            docStatus = .cancelled
             // A cancelled run ends the pipeline; the multi-open queue must not wait forever.
             runEnded += 1
         }
@@ -171,6 +234,7 @@ public final class OperationSession {
             // its own scoped access, so balance the resolve immediately.
             openedURL = resolved.url
             anchorURL = resolved.url
+            anchorIsArchive = true
             if resolved.didStart { resolved.url.stopAccessingSecurityScopedResource() }
         }
         setBusy(true)
@@ -195,6 +259,7 @@ public final class OperationSession {
         runKind = .create
         openedURL = request.parFile
         anchorURL = request.parFile
+        anchorIsArchive = false
         setBusy(true)
         // The engine emits .extractionPlaced(parFile) on success, which sets placedURL for
         // "Show in Finder" — the same machinery extraction uses.
@@ -232,6 +297,7 @@ public final class OperationSession {
         reset()
         openedURL = url
         anchorURL = url
+        anchorIsArchive = true
         log.append("Opened archive \(url.lastPathComponent).")
         requestExtract(using: extractor, options: options, password: password, conflicts: conflicts)
     }
@@ -270,6 +336,7 @@ public final class OperationSession {
     ) {
         guard !isBusy else { return }
         anchorURL = archiveURL
+        anchorIsArchive = true
         log.append("Post-processing (\(ruleName)): extracting \(archiveURL.lastPathComponent).")
         requestExtract(
             using: extractor, options: options, password: password, conflicts: conflicts,
@@ -356,6 +423,7 @@ public final class OperationSession {
     public func noteRestoredArchive(_ url: URL) {
         openedURL = url
         anchorURL = url
+        anchorIsArchive = true
         log.append(
             "Archive \(url.lastPathComponent) — use the Extract button to extract it again.")
     }
@@ -387,7 +455,8 @@ public final class OperationSession {
             self.parSet = outcome.parSet
             self.openedURL = url
             self.anchorURL = outcome.anchorURL
-            self.rows = outcome.rows
+            self.anchorIsArchive = false
+            self.rows = Self.displaySorted(outcome.rows)
             // first-wins, never trap: row ids are unique by construction, but they derive from
             // untrusted input — Dictionary(uniqueKeysWithValues:) would crash on a duplicate.
             self.indexByID = Dictionary(
@@ -396,7 +465,8 @@ public final class OperationSession {
             self.log.append(contentsOf: outcome.logLines)
             self.docStatus = outcome.docStatus
             self.setBusy(false)
-            if let engine, outcome.parSet != nil, self.parSet?.kind == .par2 {
+            // Both kinds auto-verify now — PAR1 runs through the native engine (Phase 8).
+            if let engine, outcome.parSet != nil {
                 if self.needsFolderGrant {
                     // The UI presents the one-time "grant this folder" powerbox panel.
                     self.pendingGrantAction = .verify(autoRepair: autoRepair)
@@ -572,6 +642,7 @@ public final class OperationSession {
             parSet = nil
             openedURL = nil
             anchorURL = nil
+            anchorIsArchive = false
         }
     }
 
@@ -593,9 +664,12 @@ public final class OperationSession {
             case .scanningStarted:
                 docStatus = .checking
             case .filesDiscovered(let files):
-                rows = files
+                // Finder-style ordering (".sit.2" before ".sit.10") regardless of which
+                // engine emitted the roster — statuses key on row ids, so display order is
+                // free to differ from the wire order. (ROADMAP Phase 8 polish)
+                rows = Self.displaySorted(files)
                 indexByID = Dictionary(
-                    files.enumerated().map { ($1.id, $0) },
+                    rows.enumerated().map { ($1.id, $0) },
                     uniquingKeysWith: { first, _ in first }
                 )
             case .fileStatusChanged(let id, let status):
@@ -621,7 +695,7 @@ public final class OperationSession {
                         if docStatus == .checking || docStatus == .repairing
                             || docStatus == .extracting || docStatus == .creating
                         {
-                            docStatus = .waitingToStart
+                            docStatus = .cancelled
                         }
                     case .notImplemented:
                         docStatus = .internalError

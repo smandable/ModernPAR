@@ -95,9 +95,12 @@ public enum ExtractDestination: Sendable {
 
 /// What to do when an item to be extracted already exists on disk. The raw values persist the
 /// "default answer" preference (`existingUnrarDestinationAction`, doc-01 §5.4).
+/// `.overwriteAll` is a per-run ANSWER only (the dialog's "Overwrite All" — the broker
+/// remembers it for the rest of the run); it is never offered as a stored default.
 public enum ConflictPolicy: String, Sendable {
     case ask
     case overwrite
+    case overwriteAll
     case keepBoth
     case cancel
 }

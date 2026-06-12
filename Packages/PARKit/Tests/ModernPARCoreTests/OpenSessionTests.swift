@@ -57,7 +57,7 @@ struct OpenSessionTests {
         // Cancel must restore terminal state immediately — a stuck spinner with the Open
         // button disabled was a confirmed review finding.
         #expect(!session.isBusy)
-        #expect(session.docStatus == .waitingToStart)
+        #expect(session.docStatus == .cancelled)
         // And the discarded parse outcome must not be applied later.
         try await Task.sleep(for: .milliseconds(200))
         #expect(session.rows.isEmpty)

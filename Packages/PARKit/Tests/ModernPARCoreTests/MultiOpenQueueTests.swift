@@ -158,6 +158,39 @@ struct MultiOpenQueueTests {
         #expect(session.runEnded == before + 1)
     }
 
+    @Test func fileTableUsesFinderStyleNameOrdering() {
+        // ".sit.2" before ".sit.10" — numeric-aware, not lexicographic.
+        let rows = ["archive.sit.10", "archive.sit.2", "b.dat", "A.dat"].map {
+            FileEntry(name: $0, sizeBytes: 1)
+        }
+        let sorted = OperationSession.displaySorted(rows).map(\.name)
+        #expect(sorted == ["A.dat", "archive.sit.2", "archive.sit.10", "b.dat"])
+    }
+
+    @Test func sortOrderIsConsistentForNonASCIIDigits() {
+        // Fullwidth digits produced a comparator CYCLE (92 < b < ５ < 92) — every input
+        // rotation of the same set must now sort identically. (Phase 8 review)
+        let names = ["92.dat", "b.dat", "\u{FF15}.dat"]
+        var results = Set<[String]>()
+        for rotation in 0..<names.count {
+            let rotated = Array(names[rotation...] + names[..<rotation])
+            let sorted = OperationSession.displaySorted(
+                rotated.map { FileEntry(name: $0, sizeBytes: 1) }
+            ).map(\.name)
+            results.insert(sorted)
+        }
+        #expect(results.count == 1, "a strict weak ordering sorts every rotation the same")
+        #expect(results.first == ["\u{FF15}.dat", "92.dat", "b.dat"])
+    }
+
+    @Test func paddedDigitTiesFollowFinderOrdering() {
+        // Numerically equal runs break ties on padding: "a1" before "a01" (Finder).
+        let sorted = OperationSession.displaySorted(
+            ["a01.dat", "a1.dat", "file 002", "file 2"].map { FileEntry(name: $0, sizeBytes: 1) }
+        ).map(\.name)
+        #expect(sorted == ["a1.dat", "a01.dat", "file 2", "file 002"])
+    }
+
     @Test func nonOKSelectionCoversExactlyTheProblemStates() {
         #expect(FileStatus.recoverableMissing.isNonOK)
         #expect(FileStatus.recoverableCorrupt.isNonOK)

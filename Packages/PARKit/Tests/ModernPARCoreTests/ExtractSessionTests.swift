@@ -121,7 +121,7 @@ struct ExtractSessionTests {
             .docStatusChanged(.extracting),
             .finished(.failure(.cancelled)),
         ])
-        #expect(session.docStatus == .waitingToStart)
+        #expect(session.docStatus == .cancelled)
         #expect(!session.isBusy)
     }
 
@@ -165,7 +165,7 @@ struct ExtractSessionTests {
         #expect(session.isBusy)
         session.cancel()
         #expect(!session.isBusy)
-        #expect(session.docStatus == .waitingToStart)
+        #expect(session.docStatus == .cancelled)
     }
 
     @Test func restoredArchiveWindowSurfacesTheArchiveWithoutRunning() async throws {

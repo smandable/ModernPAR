@@ -18,6 +18,13 @@ public final class AppModel {
     /// The PAR2 creator (EmbeddedEngine in the app; nil in previews). Injected behind the
     /// protocol so Core/UI stay engine-module-free. (ROADMAP Phase 6)
     public var par2Creator: (any Par2Creator)?
+    /// The native PAR1 creator (Par1CreateEngine in the app; ROADMAP Phase 8).
+    public var par1Creator: (any Par2Creator)?
+
+    /// The author engine for a create window's kind.
+    public func creator(for kind: ParKind) -> (any Par2Creator)? {
+        kind == .par1 ? par1Creator : par2Creator
+    }
     /// The RAR extractor (RARExtractor from ArchiveKit in the app; nil where extraction is
     /// unavailable, e.g. previews). Injected behind the protocol so Core/UI stay C++-free.
     /// (ARCHITECTURE.md §2; ROADMAP Phase 4)
@@ -74,6 +81,7 @@ public final class AppModel {
     public init(
         par2Engine: any PAR2Engine,
         par2Creator: (any Par2Creator)? = nil,
+        par1Creator: (any Par2Creator)? = nil,
         archiveExtractor: (any ArchiveExtractor)? = nil,
         zipExtractor: (any ArchiveExtractor)? = nil,
         settings: Settings = Settings(),
@@ -81,6 +89,7 @@ public final class AppModel {
     ) {
         self.par2Engine = par2Engine
         self.par2Creator = par2Creator
+        self.par1Creator = par1Creator
         self.archiveExtractor = archiveExtractor
         self.zipExtractor = zipExtractor
         self.settings = settings

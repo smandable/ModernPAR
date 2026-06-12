@@ -88,7 +88,7 @@ public enum ExtractPlacement {
 
         if manager.fileExists(atPath: target.path) {
             switch conflicts.resolveSync(conflictAt: target) {
-            case .overwrite:
+            case .overwrite, .overwriteAll:  // the broker normalizes; defensive here
                 do {
                     try trashOrRemove(target)
                 } catch {

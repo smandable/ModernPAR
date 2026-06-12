@@ -96,14 +96,19 @@ public struct CreateRequest: Sendable {
     public var files: [URL]
     public var options: CreateOptions
     public var folderBookmark: Data?
+    /// Set for a PAR1 create (the number of `.pNN` volumes, 0–99); nil = PAR2.
+    /// (ROADMAP Phase 8 — PAR1 authoring rides the native RS code.)
+    public var par1VolumeCount: Int?
 
     public init(
-        parFile: URL, files: [URL], options: CreateOptions, folderBookmark: Data? = nil
+        parFile: URL, files: [URL], options: CreateOptions, folderBookmark: Data? = nil,
+        par1VolumeCount: Int? = nil
     ) {
         self.parFile = parFile
         self.files = files
         self.options = options
         self.folderBookmark = folderBookmark
+        self.par1VolumeCount = par1VolumeCount
     }
 }
 
