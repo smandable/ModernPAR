@@ -163,12 +163,20 @@ let package = Package(
         // Core/UI behind the ArchiveExtractor protocol only.
         .target(name: "ArchiveKit", dependencies: ["ModernPARCore", "CUnrar", "CLibArchive"]),
         // SwiftUI views, scenes, commands. Engine-agnostic: depends only on Core's protocols.
-        .target(name: "ModernPARUI", dependencies: ["ModernPARCore"]),
+        // Resources: verbatim third-party license texts for the Acknowledgements view —
+        // ModernPARUITests gates them against the canonical files in the source tree.
+        .target(
+            name: "ModernPARUI", dependencies: ["ModernPARCore"],
+            resources: [.copy("Resources/Licenses")]),
         .testTarget(
             name: "ModernPARCoreTests",
             dependencies: ["ModernPARCore", "Par2Kit"],
             resources: [.copy("Fixtures")]
         ),
+        // Compliance gate (Phase 9): bundled license texts exist, match their canonical
+        // originals byte-for-byte, and the mandatory UnRAR paragraph stays verbatim.
+        .testTarget(
+            name: "ModernPARUITests", dependencies: ["ModernPARUI", "ModernPARCore"]),
         // Par2HelperCLI is a dependency so `swift test` builds the helper binary the
         // HelperProcessEngine tests spawn.
         .testTarget(

@@ -6,13 +6,17 @@ when Apple retires Rosetta 2).
 
 Built with **Swift 6 + SwiftUI** (Xcode 26, macOS 14+).
 
-> Status: **Phases 0–8 complete — fully native, no Rosetta anywhere.** Verify/repair/create for
-> both PAR2 (embedded par2cmdline-turbo) and PAR1 (pure-Swift GF(2⁸) Reed-Solomon, byte-identical
-> to the original's Intel helper and cross-verified by it), RAR/zip extraction including `.001`
-> splits and SFX, the full six-tab preference surface, the post-process rule editor, and in-app
-> help. Every Mach-O in the bundle is arm64-only (CI-gated). 331 tests, including byte-for-byte
-> oracle checks against the original tools. Remaining work: notarized distribution + Sparkle
-> (Phase 9). See [docs/ROADMAP.md](docs/ROADMAP.md).
+> Status: **Phases 0–8 complete — fully native, no Rosetta anywhere; Phase 9 (ship track)
+> scaffolded.** Verify/repair/create for both PAR2 (embedded par2cmdline-turbo) and PAR1
+> (pure-Swift GF(2⁸) Reed-Solomon, byte-identical to the original's Intel helper and
+> cross-verified by it), RAR/zip extraction including `.001` splits and SFX, the full six-tab
+> preference surface, the post-process rule editor, and in-app help. Every Mach-O in the bundle
+> is arm64-only (CI-gated, including the embedded Sparkle 2). 342 tests, including byte-for-byte
+> oracle checks against the original tools and license-compliance gates. The signing /
+> notarization / Sparkle / DMG pipeline is in place (`Scripts/release.sh`, tag-gated release
+> workflow) and waits only on the owner-credential checklist — Developer ID cert, notary
+> API key, Sparkle EdDSA key, feed confirmation — for the first notarized cut.
+> See [docs/ROADMAP.md](docs/ROADMAP.md).
 
 ## What it does
 

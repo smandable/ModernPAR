@@ -25,6 +25,20 @@
 	<key>NSHumanReadableCopyright</key>
 	<string>ModernPAR — an open successor to MacPAR deLuxe.</string>
 
+	<!-- Sparkle 2 (ROADMAP Phase 9; doc-06 §6). The updater stays OFF (UpdaterConfiguration
+	     gate) until SUPublicEDKey holds the real Ed25519 public key from Sparkle's
+	     generate_keys and the feed URL below is confirmed. Sandboxed apps need the
+	     installer-launcher XPC service; the downloader service stays off because the app
+	     already has com.apple.security.network.client. -->
+	<key>SUEnableInstallerLauncherService</key>
+	<true/>
+	<key>SUEnableDownloaderService</key>
+	<false/>
+	<key>SUFeedURL</key>
+	<string>https://github.com/smandable/ModernPAR/releases/latest/download/appcast.xml</string>
+	<key>SUPublicEDKey</key>
+	<string></string>
+
 	<key>CFBundleDocumentTypes</key>
 	<array>
 		<dict>

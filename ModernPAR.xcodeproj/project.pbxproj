@@ -9,17 +9,20 @@
 /* Begin PBXBuildFile section */
 		AA0000000000000000000020 /* ModernPARApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000010 /* ModernPARApp.swift */; };
 		AA0000000000000000000021 /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000011 /* AppDelegate.swift */; };
+		AA0000000000000000000023 /* UpdaterSupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000015 /* UpdaterSupport.swift */; };
 		AA0000000000000000000022 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000014 /* Assets.xcassets */; };
 		AA0000000000000000000054 /* ModernPARUI in Frameworks */ = {isa = PBXBuildFile; productRef = AA0000000000000000000051 /* ModernPARUI */; };
 		AA0000000000000000000055 /* ModernPARCore in Frameworks */ = {isa = PBXBuildFile; productRef = AA0000000000000000000052 /* ModernPARCore */; };
 		AA0000000000000000000056 /* Par2Kit in Frameworks */ = {isa = PBXBuildFile; productRef = AA0000000000000000000053 /* Par2Kit */; };
 		AA0000000000000000000058 /* ArchiveKit in Frameworks */ = {isa = PBXBuildFile; productRef = AA0000000000000000000057 /* ArchiveKit */; };
+		AA0000000000000000000059 /* Sparkle in Frameworks */ = {isa = PBXBuildFile; productRef = AA0000000000000000000060 /* Sparkle */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
 		AA0000000000000000000003 /* ModernPAR.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = ModernPAR.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		AA0000000000000000000010 /* ModernPARApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ModernPARApp.swift; sourceTree = "<group>"; };
 		AA0000000000000000000011 /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
+		AA0000000000000000000015 /* UpdaterSupport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UpdaterSupport.swift; sourceTree = "<group>"; };
 		AA0000000000000000000012 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		AA0000000000000000000013 /* ModernPAR.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = ModernPAR.entitlements; sourceTree = "<group>"; };
 		AA0000000000000000000014 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
@@ -34,6 +37,7 @@
 				AA0000000000000000000055 /* ModernPARCore in Frameworks */,
 				AA0000000000000000000056 /* Par2Kit in Frameworks */,
 				AA0000000000000000000058 /* ArchiveKit in Frameworks */,
+				AA0000000000000000000059 /* Sparkle in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -61,6 +65,7 @@
 			children = (
 				AA0000000000000000000010 /* ModernPARApp.swift */,
 				AA0000000000000000000011 /* AppDelegate.swift */,
+				AA0000000000000000000015 /* UpdaterSupport.swift */,
 				AA0000000000000000000014 /* Assets.xcassets */,
 				AA0000000000000000000012 /* Info.plist */,
 				AA0000000000000000000013 /* ModernPAR.entitlements */,
@@ -78,6 +83,7 @@
 				AA0000000000000000000030 /* Sources */,
 				AA0000000000000000000031 /* Frameworks */,
 				AA0000000000000000000032 /* Resources */,
+				AA0000000000000000000034 /* Thin embedded frameworks to arm64 */,
 			);
 			buildRules = (
 			);
@@ -89,6 +95,7 @@
 				AA0000000000000000000052 /* ModernPARCore */,
 				AA0000000000000000000053 /* Par2Kit */,
 				AA0000000000000000000057 /* ArchiveKit */,
+				AA0000000000000000000060 /* Sparkle */,
 			);
 			productName = ModernPAR;
 			productReference = AA0000000000000000000003 /* ModernPAR.app */;
@@ -120,6 +127,7 @@
 			mainGroup = AA0000000000000000000004;
 			packageReferences = (
 				AA0000000000000000000050 /* XCLocalSwiftPackageReference "Packages/PARKit" */,
+				AA0000000000000000000061 /* XCRemoteSwiftPackageReference "Sparkle" */,
 			);
 			productRefGroup = AA0000000000000000000005 /* Products */;
 			projectDirPath = "";
@@ -141,6 +149,28 @@
 		};
 /* End PBXResourcesBuildPhase section */
 
+/* Begin PBXShellScriptBuildPhase section */
+		AA0000000000000000000034 /* Thin embedded frameworks to arm64 */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = "Thin embedded frameworks to arm64";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/bash;
+			shellScript = "\"$PROJECT_DIR/Scripts/thin-frameworks.sh\"\n";
+		};
+/* End PBXShellScriptBuildPhase section */
+
 /* Begin PBXSourcesBuildPhase section */
 		AA0000000000000000000030 /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
@@ -148,6 +178,7 @@
 			files = (
 				AA0000000000000000000020 /* ModernPARApp.swift in Sources */,
 				AA0000000000000000000021 /* AppDelegate.swift in Sources */,
+				AA0000000000000000000023 /* UpdaterSupport.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -217,7 +248,7 @@
 				COMBINE_HIDPI_IMAGES = YES;
 				CURRENT_PROJECT_VERSION = 1;
 				ENABLE_HARDENED_RUNTIME = YES;
-				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = App/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -245,7 +276,7 @@
 				COMBINE_HIDPI_IMAGES = YES;
 				CURRENT_PROJECT_VERSION = 1;
 				ENABLE_HARDENED_RUNTIME = YES;
-				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = App/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -291,6 +322,17 @@
 		};
 /* End XCLocalSwiftPackageReference section */
 
+/* Begin XCRemoteSwiftPackageReference section */
+		AA0000000000000000000061 /* XCRemoteSwiftPackageReference "Sparkle" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/sparkle-project/Sparkle";
+			requirement = {
+				kind = exactVersion;
+				version = 2.9.3;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
 /* Begin XCSwiftPackageProductDependency section */
 		AA0000000000000000000051 /* ModernPARUI */ = {
 			isa = XCSwiftPackageProductDependency;
@@ -307,6 +349,11 @@
 		AA0000000000000000000057 /* ArchiveKit */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = ArchiveKit;
+		};
+		AA0000000000000000000060 /* Sparkle */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = AA0000000000000000000061 /* XCRemoteSwiftPackageReference "Sparkle" */;
+			productName = Sparkle;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

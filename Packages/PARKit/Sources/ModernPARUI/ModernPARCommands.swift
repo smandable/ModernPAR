@@ -89,6 +89,13 @@ public struct ModernPARCommands: Commands {
                 openWindow(id: "modernpar-help")
             }
             .keyboardShortcut("?", modifiers: .command)
+
+            Divider()
+
+            // Bundled licenses + GPL corresponding-source offer (ROADMAP Phase 9).
+            Button("Acknowledgements") {
+                openWindow(id: "modernpar-acknowledgements")
+            }
         }
     }
 

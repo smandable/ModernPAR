@@ -5,9 +5,21 @@
 // Everything crossing this boundary is POD, const char* (UTF-8), or a
 // C function pointer; all C++ exceptions are caught behind it.
 //
-// This component vendors UnRAR source code. Per its license, the UnRAR source
-// code may not be used to develop a RAR (WinRAR) compatible archiver — this
-// shim deliberately exposes EXTRACTION AND LISTING ONLY, no creation.
+// This component vendors UnRAR source code. The license's mandatory attribution
+// paragraph is reproduced VERBATIM below (it requires inclusion "in source code
+// comments of resulting package"); this shim accordingly exposes EXTRACTION AND
+// LISTING ONLY, no creation. Do not edit the paragraph — AcknowledgementsTests
+// compares it word-for-word against the bundled license text.
+//
+//   UnRAR source code may be used in any software to handle
+//   RAR archives without limitations free of charge, but cannot be
+//   used to develop RAR (WinRAR) compatible archiver and to
+//   re-create RAR compression algorithm, which is proprietary.
+//   Distribution of modified UnRAR source code in separate form
+//   or as a part of other software is permitted, provided that
+//   full text of this paragraph, starting from "UnRAR source code"
+//   words, is included in license, or in documentation if license
+//   is not available, and in source code comments of resulting package.
 //
 // Thread-safety: the UnRAR engine keeps process-global state. Callers must
 // serialize all unrarshim_* calls onto a single thread/queue; do not run two

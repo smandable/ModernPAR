@@ -432,6 +432,51 @@ These are the load-bearing calls that the phases below assume. Each resolves a r
 
 > **Run this as a thin track from Phase 0, not just at the end.** Hardened Runtime + sandbox are on from day one; the first notarized DMG should be cut at the MVP ship line (end of Phase 5) and re-cut each milestone. The list below is the *finalization*.
 
+> **Status: HEADLESS SCAFFOLD DONE (2026-06-12) — blocked on owner credentials for the first
+> notarized cut.** Everything that runs without secrets is in place and exercised:
+> - **Sparkle 2.9.3 via SwiftPM** (exact-version pin, `Package.resolved` committed). Sparkle ships
+>   universal binaries, so a build phase (`Scripts/thin-frameworks.sh`) thins everything under
+>   `Contents/Frameworks` to arm64 and re-signs bottom-up — the strict CI arm64-only gate holds.
+> - **Gated updater**: `SPUStandardUpdaterController` + "Check for Updates…" (app menu) stay
+>   inert until `SUFeedURL` *and* a real `SUPublicEDKey` are configured
+>   (`UpdaterConfiguration` in Core, unit-tested). Installer-launcher service ON, downloader
+>   service OFF (we hold `network.client`), both mach-lookup exceptions in the entitlements.
+> - **Entitlements audit** (`Scripts/entitlements-audit.sh`): deny-by-default allowlist (no
+>   library-validation bypass / JIT / get-task-allow / stray exceptions), static mode wired into
+>   every CI run, `--app` mode (effective entitlements + hardened-runtime flag on every Mach-O)
+>   wired into the release pipeline.
+> - **Acknowledgements**: Help ▸ Acknowledgements window — GPL-2.0 text + corresponding-source
+>   offer, verbatim UnRAR paragraph + full license, libarchive BSD, Sparkle MIT. License copies
+>   are test-gated byte-for-byte against their canonical files (`ModernPARUITests`).
+> - **Release pipeline** (`Scripts/release.sh`): build → bottom-up sign (never `--deep`;
+>   entitlements expanded — codesign doesn't substitute `$(PRODUCT_BUNDLE_IDENTIFIER)`) →
+>   notarize + staple the **.app** → DMG (with /Applications symlink) → notarize + staple the
+>   **DMG** → `stapler validate` + `spctl` both. `--adhoc` smoke mode verified end-to-end.
+> - **Tag-gated release CI** (`.github/workflows/release.yml`): on `v*` tags only — tests →
+>   temp-keychain cert import → release.sh with ASC API key → `generate_appcast`
+>   (EdDSA-signed) → GitHub Release with DMG + appcast. Required secrets documented in the
+>   workflow header. Regular CI is unchanged.
+>
+> The 48-agent adversarial review (5 lenses, 2-refuter verification + tiebreakers) confirmed
+> 13 distinct findings — 1 high (the UnRAR attribution paragraph was NOT yet in source
+> comments, which the license and THIRD-PARTY-LICENSES.md both require), plus release-gate
+> holes (mach-lookup names audited by suffix only; unsigned DMG flunking the offline spctl
+> verdict; no ship-gate on a placeholder SUPublicEDKey; no appcast-signature check; no
+> build-number monotonicity guard; prerelease tags hijacking the live feed) and tooling bugs
+> (sign-update.sh dropping generate_keys args; temp-file leaks) — all fixed with the audit/
+> test gates extended to cover them. One more "confirmed" finding (ad-hoc + hardened runtime
+> supposedly failing library validation on the embedded Sparkle) was refuted by direct
+> launch test. 342 tests green.
+>
+> **Still owner-blocked** (see the Phase 9 credentials checklist handed to Sean): Developer ID
+> Application cert (keychain has only Apple Development + Apple Distribution), notarytool
+> keychain profile + ASC API key, Sparkle EdDSA keypair (`Scripts/sign-update.sh
+> generate-keys`), feed-hosting confirmation (Info.plist pre-points at
+> `releases/latest/download/appcast.xml`), CI secrets, then: cut `v0.1.0`, clean-Mac offline
+> Gatekeeper test, Sparkle end-to-end update test. Deferred niceties: bundling `par2helper`
+> as a fallback-build variant; legal review before the first public release (top item:
+> GPL app + UnRAR-licensed component coexistence).
+
 **Goal.** A notarized, stapled, auto-updating DMG users can install and keep for years.
 
 **Tasks.**

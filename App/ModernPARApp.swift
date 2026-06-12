@@ -25,6 +25,10 @@ struct ModernPARApp: App {
         archiveExtractor: RARExtractor(),
         zipExtractor: ZipExtractor())
 
+    /// Sparkle scaffolding — inert (controller nil, menu item disabled) until SUFeedURL +
+    /// SUPublicEDKey are fully configured in Info.plist. (ROADMAP Phase 9)
+    @State private var updaterSupport = UpdaterSupport()
+
     var body: some Scene {
         WindowGroup(for: SessionRoute.self) { $route in
             // Finder open-with / dock-drop routing lives inside SetWindow (OpenFilesClaimant):
@@ -41,7 +45,10 @@ struct ModernPARApp: App {
             height: model.settings.lastWindowHeight > 0 ? model.settings.lastWindowHeight : 480
         )
         .handlesExternalEvents(matching: ["modernpar"])
-        .commands { ModernPARCommands(model: model) }
+        .commands {
+            ModernPARCommands(model: model)
+            UpdaterCommands(support: updaterSupport)
+        }
 
         Settings {
             SettingsView()
@@ -50,6 +57,11 @@ struct ModernPARApp: App {
 
         Window("ModernPAR Help", id: "modernpar-help") {
             HelpView()
+        }
+        .windowResizability(.contentSize)
+
+        Window("Acknowledgements", id: "modernpar-acknowledgements") {
+            AcknowledgementsView()
         }
         .windowResizability(.contentSize)
     }

@@ -1,0 +1,137 @@
+# Release pipeline (ROADMAP Phase 9): runs ONLY on v* tags. Regular CI (ci.yml) stays
+# unsigned; this job produces the shippable artifact — a Developer-ID-signed, notarized,
+# stapled DMG (inner .app stapled too) plus an EdDSA-signed appcast for Sparkle — and
+# publishes both as a GitHub Release.
+#
+# Required repository secrets (Settings ▸ Secrets and variables ▸ Actions):
+#   DEVELOPER_ID_P12_BASE64   base64 of the "Developer ID Application" cert+key .p12 export
+#   DEVELOPER_ID_P12_PASSWORD password chosen at .p12 export
+#   ASC_API_KEY_P8            App Store Connect API key file contents (AuthKey_XXXX.p8) —
+#                             role "Developer" or above, for notarytool
+#   ASC_API_KEY_ID            the key's ID (e.g. ABC123DEFG)
+#   ASC_API_ISSUER_ID         the issuer UUID from the ASC API keys page
+#   SPARKLE_PRIVATE_KEY       EdDSA private key: create with `Scripts/sign-update.sh
+#                             generate-keys` (lands in the login keychain), then export with
+#                             `Scripts/sign-update.sh generate-keys -x /tmp/sparkle_key`,
+#                             paste the FILE contents into this secret, delete the file.
+#                             (-x writes to a path; "-" is not stdout.) NEVER commit this
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: macos-26
+    steps:
+      # SHA-pinned (= v5): this workflow's env holds the Developer ID identity and the
+      # Sparkle private key — the credentials for the whole update channel — so a mutable
+      # action tag is not acceptable here even though ci.yml uses tag pins.
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          # release.sh derives the Sparkle build number from `git rev-list --count` and
+          # checks monotonicity against every existing v* tag.
+          fetch-depth: 0
+
+      - name: Show toolchain
+        run: swift --version && xcodebuild -version
+
+      # A tag is not a guarantee the commit was ever green — gate the release on the same
+      # test suite CI runs (PTY for line-flushed output, as in ci.yml).
+      - name: Unit tests (PARKit package)
+        timeout-minutes: 20
+        run: script -q /dev/null swift test --package-path Packages/PARKit
+
+      - name: Entitlements audit (static)
+        run: Scripts/entitlements-audit.sh
+
+      - name: Import Developer ID certificate
+        env:
+          P12_BASE64: ${{ secrets.DEVELOPER_ID_P12_BASE64 }}
+          P12_PASSWORD: ${{ secrets.DEVELOPER_ID_P12_PASSWORD }}
+        run: |
+          set -euo pipefail
+          KEYCHAIN="$RUNNER_TEMP/release.keychain-db"
+          KEYCHAIN_PASSWORD=$(uuidgen)
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          echo "$P12_BASE64" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+          security import "$RUNNER_TEMP/cert.p12" -k "$KEYCHAIN" -P "$P12_PASSWORD" \
+            -T /usr/bin/codesign
+          rm -f "$RUNNER_TEMP/cert.p12"
+          security set-key-partition-list -S apple-tool:,apple: -s \
+            -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN" >/dev/null
+          security list-keychains -d user -s "$KEYCHAIN" login.keychain-db
+
+      - name: Build, sign, notarize, staple
+        # notarytool submit --wait has no client timeout; an Apple-side notary backlog must
+        # not pin a runner for the 6-hour job default.
+        timeout-minutes: 90
+        env:
+          ASC_API_KEY_P8: ${{ secrets.ASC_API_KEY_P8 }}
+          ASC_API_KEY_ID: ${{ secrets.ASC_API_KEY_ID }}
+          ASC_API_ISSUER_ID: ${{ secrets.ASC_API_ISSUER_ID }}
+        run: |
+          set -euo pipefail
+          printf '%s' "$ASC_API_KEY_P8" > "$RUNNER_TEMP/AuthKey.p8"
+          Scripts/release.sh \
+            --version "${GITHUB_REF_NAME#v}" \
+            --notary-key "$RUNNER_TEMP/AuthKey.p8" \
+            --notary-key-id "$ASC_API_KEY_ID" \
+            --notary-issuer "$ASC_API_ISSUER_ID"
+          rm -f "$RUNNER_TEMP/AuthKey.p8"
+
+      # generate_appcast (from the SAME resolved Sparkle the app embeds) signs the DMG with
+      # the EdDSA key and emits the appcast item Sparkle clients consume. The appcast is
+      # uploaded as a release asset; SUFeedURL points at
+      # …/releases/latest/download/appcast.xml, which always re-resolves to the newest
+      # (non-prerelease) release's copy.
+      - name: Generate signed appcast
+        env:
+          SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          TOOLS=build/SourcePackages/artifacts/sparkle/Sparkle/bin
+          printf '%s' "$SPARKLE_PRIVATE_KEY" | "$TOOLS/generate_appcast" \
+            --ed-key-file - \
+            --download-url-prefix "https://github.com/${GITHUB_REPOSITORY}/releases/download/${GITHUB_REF_NAME}/" \
+            --link "https://github.com/${GITHUB_REPOSITORY}" \
+            -o dist/appcast.xml \
+            dist/
+          cat dist/appcast.xml
+          # generate_appcast OMITS sparkle:edSignature (with only a warning) when the key
+          # can't sign or doesn't match the app's SUPublicEDKey — and clients reject
+          # unsigned items. An unsigned appcast must fail the release, not publish.
+          if ! grep -q 'sparkle:edSignature="' dist/appcast.xml; then
+            echo "appcast item is UNSIGNED: SPARKLE_PRIVATE_KEY missing/invalid or does not" \
+              "match the SUPublicEDKey baked into the app (see generate_appcast output)." >&2
+            exit 1
+          fi
+
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          # Hyphenated tags (v1.2.0-beta.1, -rc1, …) publish as prereleases: they must not
+          # become 'latest', because releases/latest/download/appcast.xml IS the live
+          # Sparkle feed for every production client.
+          PRERELEASE=""
+          [[ "$GITHUB_REF_NAME" == *-* ]] && PRERELEASE=1
+          gh release create "$GITHUB_REF_NAME" \
+            dist/ModernPAR-*.dmg dist/appcast.xml \
+            --title "ModernPAR $GITHUB_REF_NAME" \
+            --generate-notes \
+            --verify-tag \
+            ${PRERELEASE:+--prerelease}
+
+      - name: Clean up keychain
+        if: always()
+        run: |
+          security delete-keychain "$RUNNER_TEMP/release.keychain-db" 2>/dev/null || true
+          security list-keychains -d user -s login.keychain-db

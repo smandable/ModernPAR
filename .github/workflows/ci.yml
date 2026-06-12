@@ -27,6 +27,11 @@ jobs:
       - name: Lint (swift-format)
         run: swift format lint --strict --recursive App Packages/PARKit/Sources
 
+      # Phase 9: the entitlements file must hold EXACTLY the allowlisted entitlements —
+      # no disable-library-validation, no JIT, no get-task-allow, no stray exceptions.
+      - name: Entitlements audit (static)
+        run: Scripts/entitlements-audit.sh
+
       - name: Build app (Debug, arm64, unsigned)
         run: |
           xcodebuild -project ModernPAR.xcodeproj -scheme ModernPAR \
