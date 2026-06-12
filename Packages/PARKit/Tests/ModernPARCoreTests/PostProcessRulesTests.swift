@@ -24,21 +24,87 @@ struct PostProcessRulesTests {
         #expect(!rule.matches("a.r10"))
     }
 
-    @Test func standardRulesCoverRarThenZip() {
+    @Test func standardRulesAreZipThenPinnedUnrarLast() {
         let rules = PostProcessRules.standard
-        #expect(rules.rules.map(\.action) == [.builtInUnrar, .builtInUnzip])
+        // Only the zip rule is a user rule; the built-in Unrar rule is pinned last and not
+        // stored (doc-01 §4.2 "always last, cannot be edited/deleted"). This reconciles the
+        // Phase 5 rar-first divergence back to the original's ordering.
+        #expect(rules.rules.map(\.action) == [.builtInUnzip])
+        #expect(rules.allRules.map(\.action) == [.builtInUnzip, .builtInUnrar])
+        #expect(rules.allRules.last?.id == PostProcessRules.builtInUnrarID)
 
-        // .rar outranks .zip when both are present (top-to-bottom).
+        // A user rule outranks the pinned Unrar rule when both match (the original's order).
         let both = rules.firstMatch(in: ["data.zip", "data.rar"])
-        #expect(both?.rule.action == .builtInUnrar)
-        #expect(both?.filename == "data.rar")
+        #expect(both?.rule.action == .builtInUnzip)
+        #expect(both?.filename == "data.zip")
 
-        let zipOnly = rules.firstMatch(in: ["readme.txt", "data.zip"])
-        #expect(zipOnly?.rule.action == .builtInUnzip)
-        #expect(zipOnly?.filename == "data.zip")
+        // A rar-only set still reaches the pinned rule.
+        let rarOnly = rules.firstMatch(in: ["readme.txt", "data.rar"])
+        #expect(rarOnly?.rule.action == .builtInUnrar)
+        #expect(rarOnly?.filename == "data.rar")
 
         #expect(rules.firstMatch(in: ["readme.txt", "video.mkv"]) == nil)
         #expect(rules.firstMatch(in: []) == nil)
+    }
+
+    @Test func pinnedUnrarRuleIsAlwaysLastAndImmutable() {
+        var rules = PostProcessRules.standard
+        let pinned = PostProcessRules.builtInUnrarID
+
+        // The pinned rule is not editable, deletable, or movable — every operation is a no-op.
+        #expect(!rules.canEdit(pinned))
+        rules.delete(pinned)
+        rules.moveUp(pinned)
+        rules.moveDown(pinned)
+        #expect(rules.allRules.last?.id == pinned)
+
+        // Even after every user rule is deleted, the pinned rule still matches.
+        for rule in rules.rules { rules.delete(rule.id) }
+        #expect(rules.rules.isEmpty)
+        #expect(rules.firstMatch(in: ["a.rar"])?.rule.action == .builtInUnrar)
+    }
+
+    @Test func userRulesOutrankThePinnedRuleInListOrder() {
+        var rules = PostProcessRules.standard
+        // A user rule can target the built-in Unrar engine for OTHER patterns (e.g. comics).
+        rules.upsert(PostProcessRule(name: "Comics", pattern: "*.cbr", action: .builtInUnrar))
+        rules.upsert(
+            PostProcessRule(
+                name: "Player", pattern: "*.mkv",
+                action: .openWithApp(appPath: "/Applications/IINA.app", appName: "IINA")))
+        let match = rules.firstMatch(in: ["movie.mkv", "comic.cbr"])
+        // List order decides: Comics sits above Player (upsert appends).
+        #expect(match?.rule.name == "Comics")
+    }
+
+    @Test func editorOperationsReorderDeleteAndUpsert() {
+        var rules = PostProcessRules(rules: [
+            PostProcessRule(name: "A", pattern: "*.a", action: .openInFinder),
+            PostProcessRule(name: "B", pattern: "*.b", action: .openInFinder),
+            PostProcessRule(name: "C", pattern: "*.c", action: .openInFinder),
+        ])
+        let a = rules.rules[0].id
+        let b = rules.rules[1].id
+        let c = rules.rules[2].id
+
+        rules.moveUp(b)
+        #expect(rules.rules.map(\.id) == [b, a, c])
+        rules.moveUp(b)  // already first — no-op
+        #expect(rules.rules.map(\.id) == [b, a, c])
+        rules.moveDown(c)  // already last — no-op
+        #expect(rules.rules.map(\.id) == [b, a, c])
+        rules.moveDown(b)
+        #expect(rules.rules.map(\.id) == [a, b, c])
+
+        rules.delete(b)
+        #expect(rules.rules.map(\.id) == [a, c])
+
+        // Upsert replaces in place by id, preserving position.
+        var modified = rules.rules[0]
+        modified.pattern = "*.changed"
+        rules.upsert(modified)
+        #expect(rules.rules.map(\.id) == [a, c])
+        #expect(rules.rules[0].pattern == "*.changed")
     }
 
     @Test func firstMatchHonorsRosterOrderWithinARule() {
@@ -46,6 +112,21 @@ struct PostProcessRulesTests {
         let match = rules.firstMatch(in: ["b.part02.rar", "a.part01.rar"])
         // Roster order, not alphabetical — the extractor normalizes volumes itself.
         #expect(match?.filename == "b.part02.rar")
+    }
+
+    @Test func openWithAppActionRoundTripsThroughCodable() throws {
+        let rules = PostProcessRules(rules: [
+            PostProcessRule(
+                name: "Player", pattern: "*.mkv",
+                action: .openWithApp(appPath: "/Applications/IINA.app", appName: "IINA")),
+            PostProcessRule(name: "Reveal", pattern: "*.iso", action: .openInFinder),
+        ])
+        let data = try JSONEncoder().encode(rules)
+        let decoded = try JSONDecoder().decode(PostProcessRules.self, from: data)
+        #expect(decoded == rules)
+        #expect(
+            decoded.rules.first?.action
+                == .openWithApp(appPath: "/Applications/IINA.app", appName: "IINA"))
     }
 
     @Test func globNeverSpansASlash() {

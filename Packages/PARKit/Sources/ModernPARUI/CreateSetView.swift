@@ -14,6 +14,9 @@ struct CreateSetView: View {
     @State private var selection: Set<URL> = []
     @State private var outputName: String = ""
     @State private var showOutput = true
+    /// A new create window starts from the Par2 tab's persisted defaults — applied once,
+    /// then the window's own knobs take over. (doc-01 §5.3; ROADMAP Phase 7)
+    @State private var seededFromSettings = false
 
     var body: some View {
         @Bindable var create = create
@@ -32,6 +35,11 @@ struct CreateSetView: View {
         }
         .frame(minWidth: 560, minHeight: 460)
         .navigationTitle("New PAR Set")
+        .onAppear {
+            guard !seededFromSettings else { return }
+            seededFromSettings = true
+            create.options = model.settings.par2CreateOptions
+        }
         .focusedSceneValue(\.activeSession, session)
         .dropDestination(for: URL.self) { urls, _ in
             guard !session.isBusy else { return false }

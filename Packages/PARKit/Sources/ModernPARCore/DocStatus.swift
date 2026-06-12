@@ -33,4 +33,16 @@ public enum DocStatus: Sendable, Equatable {
             return false
         }
     }
+
+    /// Terminal failure outcomes — what unattended operation surfaces as a user notification
+    /// instead of a dialog (doc-01 §5.1 `UnattendedOperation`). Consent states like
+    /// `repairNeeded` are not failures.
+    public var isFailureEndState: Bool {
+        switch self {
+        case .notValid, .internalError, .extractionFailed, .createFailed, .needMoreRecovery:
+            return true
+        default:
+            return false
+        }
+    }
 }

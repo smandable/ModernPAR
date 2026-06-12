@@ -15,7 +15,7 @@ struct ExtractSessionTests {
 
         func extract(
             _ archive: SessionRoute,
-            to destination: ExtractDestination,
+            options: ExtractOptions,
             password: any PasswordProvider,
             conflicts: any ConflictResolver
         ) -> AsyncStream<EngineEvent> {
@@ -132,7 +132,7 @@ struct ExtractSessionTests {
     @Test func terminalErrorAndBusyClearAtomically() async throws {
         struct NeverFinishingExtractor: ArchiveExtractor {
             func extract(
-                _ archive: SessionRoute, to destination: ExtractDestination,
+                _ archive: SessionRoute, options: ExtractOptions,
                 password: any PasswordProvider, conflicts: any ConflictResolver
             ) -> AsyncStream<EngineEvent> {
                 AsyncStream { continuation in

@@ -6,6 +6,7 @@ import SwiftUI
 public struct ModernPARCommands: Commands {
     @Environment(\.openWindow) private var openWindow
     @FocusedValue(\.activeSession) private var activeSession
+    @FocusedValue(\.fileTableActions) private var fileTableActions
     private let model: AppModel
 
     public init(model: AppModel) {
@@ -13,6 +14,15 @@ public struct ModernPARCommands: Commands {
     }
 
     public var body: some Commands {
+        // Edit-menu extras (doc-01 §7.1, v3.7). Copying the selected file names rides the
+        // standard Edit ▸ Copy through the table's `.copyable` — no custom item needed.
+        CommandGroup(after: .pasteboard) {
+            Button("Select All Non-OK") {
+                fileTableActions?.selectAllNonOK()
+            }
+            .disabled(fileTableActions == nil || activeSession == nil)
+        }
+
         CommandGroup(after: .newItem) {
             Button("Open and Repair…") {
                 if let url = OpenSetPanel.present() {

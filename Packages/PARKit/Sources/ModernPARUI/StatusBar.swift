@@ -40,8 +40,14 @@ public struct StatusBar: View {
         .background(.bar)
     }
 
-    private var label: String {
-        switch docStatus {
+    private var label: String { docStatus.label }
+}
+
+/// The user-facing status line per document state — shared by the status bar and the
+/// unattended-mode failure notifications. (doc-01 §5.1)
+extension DocStatus {
+    var label: String {
+        switch self {
         case .waitingToStart: return "Waiting to start"
         case .checking: return "Verifying the files…"
         case .allFilesOK: return "All files checked out fine."

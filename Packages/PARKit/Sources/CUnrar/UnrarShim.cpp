@@ -49,6 +49,34 @@ static_assert(UNRARSHIM_FLAG_RECOVERY == ROADF_RECOVERY, "ROADF drift");
 static_assert(UNRARSHIM_FLAG_ENCHEADERS == ROADF_ENCHEADERS, "ROADF drift");
 static_assert(UNRARSHIM_FLAG_FIRSTVOLUME == ROADF_FIRSTVOLUME, "ROADF drift");
 
+// ── Raw legacy name capture (the vendor LOCAL PATCH #4 hook) ─────────────────
+// arcread.cpp's ReadHeader15 calls ModernPARCaptureRawEntryName for every
+// RAR 1.5-4.x FILE header, right after the engine decoded the name — the raw
+// codepage bytes do not survive the DLL surface otherwise (on _APPLE the
+// engine's CharToWide is UTF-8 and truncates at the first invalid byte).
+// Plain statics are safe here: header reads happen synchronously inside
+// RARReadHeaderEx on the API thread, and all unrarshim_* calls are serialized
+// by contract. The capture is consumed (and reset) per header read in
+// unrarshim_list below.
+namespace {
+std::string RawEntryName;
+bool RawEntryNameCaptured = false;
+bool EntryNameHadUnicode = true;
+
+void ResetRawEntryName() {
+    RawEntryName.clear();
+    RawEntryNameCaptured = false;
+    EntryNameHadUnicode = true;  // RAR5 / non-file headers never call the hook
+}
+}  // namespace
+
+// Referenced by the patch site in vendor/unrar/arcread.cpp (declared there).
+void ModernPARCaptureRawEntryName(const char *Bytes, size_t Size, bool HadUnicode) {
+    RawEntryName.assign(Bytes, Size);
+    RawEntryNameCaptured = true;
+    EntryNameHadUnicode = HadUnicode;
+}
+
 namespace {
 
 struct ShimContext {
@@ -271,6 +299,7 @@ UnrarShimResult unrarshim_list(const char *archive_path_utf8,
                 break;
             }
             CleanStickyEngineState();
+            ResetRawEntryName();
             RARHeaderDataEx header{};
             int rh = RARReadHeaderEx(arc.handle, &header);
             if (rh == ERAR_END_ARCHIVE) break;
@@ -289,6 +318,15 @@ UnrarShimResult unrarshim_list(const char *archive_path_utf8,
                 entry.is_directory = (header.Flags & RHDF_DIRECTORY) != 0 ? 1 : 0;
                 entry.is_encrypted = (header.Flags & RHDF_ENCRYPTED) != 0 ? 1 : 0;
                 entry.unp_version = static_cast<int>(header.UnpVer);
+                // Captured by the patch #4 hook during this header's read
+                // (legacy file headers only) — points into shim storage that
+                // stays valid for the duration of this callback.
+                entry.raw_name =
+                    RawEntryNameCaptured
+                        ? reinterpret_cast<const uint8_t *>(RawEntryName.data())
+                        : nullptr;
+                entry.raw_name_size = RawEntryNameCaptured ? RawEntryName.size() : 0;
+                entry.name_had_unicode = EntryNameHadUnicode ? 1 : 0;
                 ctx.cb.entry(ctx.cb.context, &entry);
             }
             int pc = RARProcessFileW(arc.handle, RAR_SKIP, nullptr, nullptr);
@@ -325,6 +363,10 @@ UnrarShimResult unrarshim_extract(const char *archive_path_utf8,
         if (arc.handle == nullptr) return MapResult(arc.openResult, ctx);
 
         UnrarShimResult result = UNRARSHIM_SUCCESS;
+        // Zero-based archive-order entry counter — matches the list pass's
+        // entry() sequence (split tails skipped below were never reported
+        // there either: RAR_OM_LIST merges them inside RARReadHeaderEx).
+        uint64_t entryIndex = 0;
         for (;;) {
             if (ctx.shouldCancel()) {
                 result = UNRARSHIM_CANCELLED;
@@ -352,13 +394,31 @@ UnrarShimResult unrarshim_extract(const char *archive_path_utf8,
                 }
                 continue;
             }
+            const uint64_t current = entryIndex++;
 
             const uint64_t unpSize = (static_cast<uint64_t>(header.UnpSizeHigh) << 32) |
                                      static_cast<uint64_t>(header.UnpSize);
             if (ctx.cb.file_start != nullptr)
-                ctx.cb.file_start(ctx.cb.context, nameUtf8.c_str(), unpSize);
+                ctx.cb.file_start(ctx.cb.context, current, nameUtf8.c_str(), unpSize);
 
-            int pc = RARProcessFileW(arc.handle, RAR_EXTRACT, destWideBuf.data(), nullptr);
+            // Optional caller redirect: a non-empty override becomes the
+            // dll DestName (the full output path for this entry), which the
+            // engine honors verbatim — the lever for legacy-codepage names
+            // whose UTF-8 mangling would otherwise collide or fail creation.
+            std::vector<wchar> destNameWide;
+            if (ctx.cb.destination_override != nullptr) {
+                char overrideUtf8[8192] = {0};
+                if (ctx.cb.destination_override(ctx.cb.context, current, nameUtf8.c_str(),
+                                                overrideUtf8, sizeof(overrideUtf8)) != 0 &&
+                    overrideUtf8[0] != 0) {
+                    std::wstring overrideWide;
+                    if (UtfToWide(overrideUtf8, overrideWide) && !overrideWide.empty())
+                        destNameWide = MutableWide(overrideWide);
+                }
+            }
+
+            int pc = RARProcessFileW(arc.handle, RAR_EXTRACT, destWideBuf.data(),
+                                     destNameWide.empty() ? nullptr : destNameWide.data());
 
             if (ctx.cancelled.load(std::memory_order_relaxed) || ctx.volumeMissing ||
                 ctx.passwordDeclined) {
@@ -368,7 +428,7 @@ UnrarShimResult unrarshim_extract(const char *archive_path_utf8,
                 break;
             }
             if (ctx.cb.file_done != nullptr)
-                ctx.cb.file_done(ctx.cb.context, nameUtf8.c_str(), pc);
+                ctx.cb.file_done(ctx.cb.context, current, nameUtf8.c_str(), pc);
             if (pc == ERAR_SUCCESS) continue;
             if (IsPerFileWarning(pc)) continue;  // skipped entry: warn, never fail the run
             if (IsPerFileError(pc)) {

@@ -34,7 +34,7 @@ struct ReviewRegressionTests {
             anchorBookmark: try ScopedAccess.bookmark(
                 for: folder.appendingPathComponent(anchor)))
         let stream = RARExtractor().extract(
-            route, to: .besideArchive,
+            route, options: ExtractOptions(),
             password: CountingPasswordProvider(password),
             conflicts: AutoConflictResolver(conflicts))
         var events: [EngineEvent] = []

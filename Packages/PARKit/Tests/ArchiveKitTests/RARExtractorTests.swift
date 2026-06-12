@@ -56,11 +56,11 @@ struct RARExtractorTests {
         } else {
             folder = try stage(staged ?? [archive])
         }
-        let extractor = RARExtractor(keepBrokenFiles: keepBroken)
+        let extractor = RARExtractor()
         let events = await collect(
             extractor.extract(
                 try route(anchor: folder.appendingPathComponent(archive), folder: folder),
-                to: .besideArchive,
+                options: ExtractOptions(keepBrokenFiles: keepBroken),
                 password: password,
                 conflicts: AutoConflictResolver(conflicts)))
         return (events, folder)
@@ -483,7 +483,7 @@ struct RARExtractorTests {
         let extractor = RARExtractor()
         let stream = extractor.extract(
             try route(anchor: folder.appendingPathComponent("rar5-psw.rar"), folder: folder),
-            to: .besideArchive,
+            options: ExtractOptions(),
             password: HangingPasswordProvider(),
             conflicts: AutoConflictResolver(.cancel))
 

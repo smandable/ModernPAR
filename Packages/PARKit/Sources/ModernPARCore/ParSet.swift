@@ -17,6 +17,10 @@ public struct ParSet: Identifiable, Sendable {
     public let sourceBlockCount: Int
     public let recoveryBlocksAvailable: Int
     public let files: [FileEntry]
+    /// The `.par2` files that contributed packets to this set — what `AutoDeletePnn` moves
+    /// to the Trash after a successful restore. Empty for PAR1 until Phase 8 wires its
+    /// verify path. (doc-01 §5.1; ROADMAP Phase 7)
+    public let parFiles: [URL]
 
     public init(
         id: UUID = UUID(),
@@ -24,7 +28,8 @@ public struct ParSet: Identifiable, Sendable {
         sliceSizeBytes: UInt64 = 0,
         sourceBlockCount: Int = 0,
         recoveryBlocksAvailable: Int = 0,
-        files: [FileEntry] = []
+        files: [FileEntry] = [],
+        parFiles: [URL] = []
     ) {
         self.id = id
         self.kind = kind
@@ -32,5 +37,6 @@ public struct ParSet: Identifiable, Sendable {
         self.sourceBlockCount = sourceBlockCount
         self.recoveryBlocksAvailable = recoveryBlocksAvailable
         self.files = files
+        self.parFiles = parFiles
     }
 }

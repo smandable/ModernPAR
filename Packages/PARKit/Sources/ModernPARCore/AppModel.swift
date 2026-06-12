@@ -11,6 +11,9 @@ import Observation
 public final class AppModel {
     public var settings: Settings
     public var recents: RecentsStore
+    /// One-by-one multi-open processing (doc-01 §5.6) — fresh windows enqueue their auto-run
+    /// here unless `SimultaneousProcessing` is on.
+    public let openQueue = MultiOpenQueue()
     public var par2Engine: any PAR2Engine
     /// The PAR2 creator (EmbeddedEngine in the app; nil in previews). Injected behind the
     /// protocol so Core/UI stay engine-module-free. (ROADMAP Phase 6)
@@ -22,11 +25,13 @@ public final class AppModel {
     /// The zip extractor (ZipExtractor via system libarchive; ROADMAP Phase 5).
     public var zipExtractor: (any ArchiveExtractor)?
 
-    /// The extractor for a post-processing rule's action.
+    /// The extractor for a post-processing rule's action (nil for the open actions, which
+    /// never chain into an engine run).
     public func extractor(for action: PostProcessRule.Action) -> (any ArchiveExtractor)? {
         switch action {
         case .builtInUnrar: return archiveExtractor
         case .builtInUnzip: return zipExtractor
+        case .openInFinder, .openWithApp: return nil
         }
     }
 
@@ -35,6 +40,30 @@ public final class AppModel {
         if ArchiveFileTypes.isRARArchive(url) { return archiveExtractor }
         if ArchiveFileTypes.isZipArchive(url) { return zipExtractor }
         return nil
+    }
+
+    /// Folds the persisted Unrar preferences into one run's engine options, captured by value
+    /// on the main actor. An `.ask` destination is resolved to a concrete folder by the UI
+    /// before the run starts; unattended runs never ask, so they fall back beside the archive.
+    /// The UI attaches the encoding-picker prompt before handing these to the engine.
+    public func makeExtractOptions() -> ExtractOptions {
+        let destination: ExtractDestination
+        switch settings.unrarDestinationChoice {
+        case .besideArchive:
+            destination = .besideArchive
+        case .ask:
+            destination = settings.unattendedOperation ? .besideArchive : .ask
+        case .fixed:
+            // A missing/never-set bookmark degrades to beside-the-archive rather than failing
+            // the run.
+            destination =
+                settings.unrarDestinationBookmark.map { .fixed(bookmark: $0) } ?? .besideArchive
+        }
+        return ExtractOptions(
+            destination: destination,
+            keepBrokenFiles: settings.keepBrokenFiles,
+            segmentDisposal: settings.segmentDisposal,
+            filenameEncoding: settings.filenameEncodingPreference)
     }
 
     /// Routes created by a user action DURING THIS LAUNCH. Only these auto-run the

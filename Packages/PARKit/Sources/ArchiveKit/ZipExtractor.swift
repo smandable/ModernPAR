@@ -10,36 +10,26 @@ import ModernPARCore
 /// cancellation, two passes (list → staged extract), shared placement/conflict machinery,
 /// prompt-once password via `PasswordBroker`, and placement skipped for wrong-password runs.
 public final class ZipExtractor: ArchiveExtractor, Sendable {
-    /// "Keep broken files": when true, entries failing mid-extraction stay on disk.
-    private let keepBrokenFiles: @Sendable () -> Bool
-
-    public init(keepBrokenFiles: Bool = false) {
-        self.keepBrokenFiles = { keepBrokenFiles }
-    }
-
-    public init(keepBrokenFiles provider: @escaping @Sendable () -> Bool) {
-        self.keepBrokenFiles = provider
-    }
+    public init() {}
 
     private static let queue = DispatchQueue(
         label: "org.modernpar.unzip-engine", qos: .userInitiated)
 
     public func extract(
         _ archive: SessionRoute,
-        to destination: ExtractDestination,
+        options: ExtractOptions,
         password: any PasswordProvider,
         conflicts: any ConflictResolver
     ) -> AsyncStream<EngineEvent> {
-        let keepBroken = keepBrokenFiles()
-        return AsyncStream { continuation in
+        AsyncStream { continuation in
             let token = ExtractCancelToken()
             continuation.onTermination = { _ in token.cancel() }
             Self.queue.async {
                 EngineDrainRegistry.shared.enter()
                 defer { EngineDrainRegistry.shared.leave() }
                 Self.execute(
-                    route: archive, destination: destination, password: password,
-                    conflicts: conflicts, keepBroken: keepBroken,
+                    route: archive, options: options, password: password,
+                    conflicts: conflicts,
                     token: token, continuation: continuation)
                 continuation.finish()
             }
@@ -57,13 +47,14 @@ public final class ZipExtractor: ArchiveExtractor, Sendable {
 
     private static func execute(
         route: SessionRoute,
-        destination: ExtractDestination,
+        options: ExtractOptions,
         password: any PasswordProvider,
         conflicts: any ConflictResolver,
-        keepBroken: Bool,
         token: ExtractCancelToken,
         continuation: AsyncStream<EngineEvent>.Continuation
     ) {
+        let destination = options.destination
+        let keepBroken = options.keepBrokenFiles
         guard route.mode == .extractArchive else {
             continuation.yield(.finished(.failure(.notImplemented)))
             return
@@ -92,13 +83,18 @@ public final class ZipExtractor: ArchiveExtractor, Sendable {
         case .besideArchive:
             destFolder = anchor.deletingLastPathComponent()
         case .fixed(let bookmark):
-            guard let resolved = try? ScopedAccess.resolve(bookmark) else {
+            // Same stale-bookmark contract as RARExtractor: a moved/trashed fixed
+            // destination degrades to beside-the-archive, visibly. (Phase 7 review)
+            if let resolved = try? ScopedAccess.resolve(bookmark), !resolved.isStale {
+                if resolved.didStart { scopeStops.append(resolved.url) }
+                destFolder = resolved.url
+            } else {
                 continuation.yield(
-                    .finished(.failure(.launchFailed("the destination folder is unavailable"))))
-                return
+                    .logLine(
+                        "The configured destination folder is unavailable or has moved — extracting beside the archive instead."
+                    ))
+                destFolder = anchor.deletingLastPathComponent()
             }
-            if resolved.didStart { scopeStops.append(resolved.url) }
-            destFolder = resolved.url
         case .ask:
             continuation.yield(
                 .finished(

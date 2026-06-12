@@ -31,8 +31,8 @@ struct ZipReviewRegressionTests {
             mode: .extractArchive,
             folderBookmark: try? ScopedAccess.bookmark(for: folder),
             anchorBookmark: try ScopedAccess.bookmark(for: folder.appendingPathComponent(anchor)))
-        let stream = ZipExtractor(keepBrokenFiles: keepBroken).extract(
-            route, to: .besideArchive,
+        let stream = ZipExtractor().extract(
+            route, options: ExtractOptions(keepBrokenFiles: keepBroken),
             password: CountingPasswordProvider(nil),
             conflicts: AutoConflictResolver(.cancel))
         var events: [EngineEvent] = []

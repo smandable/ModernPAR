@@ -14,18 +14,13 @@ struct ModernPARApp: App {
     /// The real engines, injected behind their protocols without touching the UI, exactly as
     /// the seams were designed: par2cmdline-turbo via Par2Shim (`MockEngine` remains for
     /// tests/previews; `HelperProcessEngine` is the fallback), and RARLAB UnRAR via
-    /// unrarshim for archive extraction (Phase 4). The keep-broken-files preference is read
-    /// per run through UserDefaults (`Settings` mirrors the same key) because the engine
-    /// evaluates it off the main actor.
+    /// unrarshim for archive extraction (Phase 4). Preferences reach the extractors by value
+    /// in `ExtractOptions`, captured on the main actor at run start (ROADMAP Phase 7).
     @State private var model = AppModel(
         par2Engine: EmbeddedEngine(),
         par2Creator: EmbeddedEngine(),
-        archiveExtractor: RARExtractor(keepBrokenFiles: {
-            UserDefaults.standard.bool(forKey: Settings.keepBrokenKey)
-        }),
-        zipExtractor: ZipExtractor(keepBrokenFiles: {
-            UserDefaults.standard.bool(forKey: Settings.keepBrokenKey)
-        }))
+        archiveExtractor: RARExtractor(),
+        zipExtractor: ZipExtractor())
 
     var body: some Scene {
         WindowGroup(for: SessionRoute.self) { $route in
@@ -35,8 +30,13 @@ struct ModernPARApp: App {
             SetWindow(route: route)
                 .environment(model)
         } defaultValue: {
-            SessionRoute(mode: .verifyRepair)
+            // The original's "Default document type when program starts" (`DefaultPar`).
+            SessionRoute(mode: model.settings.defaultMode)
         }
+        .defaultSize(
+            width: model.settings.lastWindowWidth > 0 ? model.settings.lastWindowWidth : 700,
+            height: model.settings.lastWindowHeight > 0 ? model.settings.lastWindowHeight : 480
+        )
         .handlesExternalEvents(matching: ["modernpar"])
         .commands { ModernPARCommands(model: model) }
 

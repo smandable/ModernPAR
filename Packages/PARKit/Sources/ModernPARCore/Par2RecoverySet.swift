@@ -207,7 +207,8 @@ extension ParSet {
             sliceSizeBytes: set.sliceSize,
             sourceBlockCount: set.sourceBlockCount,
             recoveryBlocksAvailable: set.recoveryBlockCount,
-            files: entries
+            files: entries,
+            parFiles: set.sourceFiles
         )
     }
 }

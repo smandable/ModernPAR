@@ -44,6 +44,19 @@ public enum FileStatus: Sendable, Equatable {
     /// Terminal-OK states are *sticky* across a re-run, reproducing the original's
     /// "remember files already OK and skip them on Retry" behavior. (ARCHITECTURE.md §3.2)
     public var isTerminalOK: Bool { self == .ok || self == .recovered }
+
+    /// What Edit ▸ Select All Non-OK selects (the original's `onSelectAllNonOK:`, v3.7):
+    /// every file with a problem — damaged, missing, or suspect. OK-family, not-yet-checked,
+    /// and not-in-set rows don't qualify. (doc-01 §7.1; ROADMAP Phase 7)
+    public var isNonOK: Bool {
+        switch self {
+        case .recoverableMissing, .recoverableCorrupt, .unrecoverableMissing,
+            .unrecoverableCorrupt, .possibleError:
+            return true
+        case .ok, .recovered, .renamed, .pending, .checking, .notInSet:
+            return false
+        }
+    }
 }
 
 /// Maps to the original's status icons (FileOKIcon / FileRecoverableIcon / FileErrorIcon /

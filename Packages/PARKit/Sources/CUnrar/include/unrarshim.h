@@ -60,6 +60,8 @@ typedef enum {
 #define UNRARSHIM_FLAG_FIRSTVOLUME 0x0100u  // this file is the FIRST volume of the set
 
 // One archive entry, valid only for the duration of the entry() callback.
+// Entries are reported in archive order; the position in this sequence equals
+// the entry_index unrarshim_extract later passes for the same entry.
 typedef struct {
     const char *name_utf8;  // path inside the archive, '/'-separated
     uint64_t unpacked_size; // 0 for directories
@@ -67,6 +69,17 @@ typedef struct {
     int is_directory;
     int is_encrypted;
     int unp_version; // format generation needed to unpack (15/20/29/50…)
+
+    // Legacy-codepage name facts (RAR 1.5-4.x headers store names in an
+    // OEM/regional codepage unless their Unicode flag is set; RAR5 names are
+    // always UTF-8). raw_name is the undecoded on-disk byte sequence (NOT
+    // NUL-safe for consumers — use raw_name_size), captured via the local
+    // vendor patch #4 (see vendor/VENDORED.txt); NULL when the header carried
+    // a real Unicode name or the format stores UTF-8 (then name_had_unicode
+    // is 1 and name_utf8 is authoritative).
+    const uint8_t *raw_name;
+    size_t raw_name_size;
+    int name_had_unicode;
 } UnrarShimEntry;
 
 // All callbacks are optional (may be NULL) and are invoked synchronously on
@@ -78,12 +91,29 @@ typedef struct {
     // Listing: one call per archive entry (unrarshim_list only).
     void (*entry)(void *context, const UnrarShimEntry *entry);
 
-    // Extraction lifecycle (unrarshim_extract only).
-    void (*file_start)(void *context, const char *name_utf8, uint64_t unpacked_size);
+    // Extraction lifecycle (unrarshim_extract only). entry_index is the
+    // entry's zero-based position in archive order — the same numbering as
+    // the list pass's entry() sequence (legacy-codepage names can collide or
+    // come out empty after the engine's UTF-8 decode, so names alone cannot
+    // identify an entry).
+    void (*file_start)(void *context, uint64_t entry_index, const char *name_utf8,
+                       uint64_t unpacked_size);
     // unrar_code is the per-file ERAR_* result (0 = extracted cleanly).
-    void (*file_done)(void *context, const char *name_utf8, int unrar_code);
+    void (*file_done)(void *context, uint64_t entry_index, const char *name_utf8,
+                      int unrar_code);
     // Incremental count of unpacked bytes written (for determinate progress).
     void (*bytes_extracted)(void *context, uint64_t bytes);
+
+    // Per-entry destination redirect (unrarshim_extract only), fired between
+    // the header read and the entry's processing. Fill utf8_buf with the FULL
+    // destination path for this entry (NUL-terminated, buf_size bytes
+    // capacity) and return 1 to redirect it; return 0 to keep the engine
+    // default (destination_dir + entry name). A redirected entry bypasses the
+    // engine's own path processing (dll DestName contract), so the caller
+    // owns path safety for the supplied path.
+    int (*destination_override)(void *context, uint64_t entry_index,
+                                const char *name_utf8, char *utf8_buf,
+                                size_t buf_size);
 
     // Multi-volume: the engine switched to the named, present volume.
     void (*volume_changed)(void *context, const char *volume_path_utf8);

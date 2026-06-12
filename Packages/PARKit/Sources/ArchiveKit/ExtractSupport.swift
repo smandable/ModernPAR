@@ -137,6 +137,11 @@ struct RAREntry: Sendable {
     var isEncrypted: Bool
     /// Format generation needed to unpack (15/20/29 for RAR1.5–4.x, 50+ for RAR5).
     var unpVersion: Int
+    /// Raw on-disk name bytes for legacy (pre-RAR5) headers that carried NO Unicode name —
+    /// nil for RAR5 and unicode-flagged entries, whose `name` is authoritative. When these
+    /// bytes are not valid UTF-8, `name` is the engine's truncated-at-first-bad-byte reading
+    /// (often empty) and `LegacyFilenameDecoder` plans a decoded redirect. (ROADMAP Phase 7)
+    var rawNameBytes: [UInt8]? = nil
 }
 
 /// Collects the list pass results (entry callback) and abort facts. Engine callbacks arrive
@@ -178,15 +183,28 @@ final class ListCollector: @unchecked Sendable {
     }
 }
 
+/// Row identity for the RAR extract pass, keyed by archive-order entry index (the shim's
+/// `entry_index`) — names cannot key legacy archives, where mangled names collide or are
+/// empty. The name carried here is the DISPLAY name (decoded when a decode plan applies).
+struct ExtractRowRef: Sendable {
+    let id: UUID
+    let name: String
+}
+
 /// Serializes extraction callbacks (engine threads) into `EngineEvent`s on the continuation,
 /// accumulating progress and the per-file outcome tallies the result mapping needs.
 final class ExtractBridge: @unchecked Sendable {
     private let lock = NSLock()
     private let continuation: AsyncStream<EngineEvent>.Continuation
     private let idsByName: [String: UUID]
+    /// RAR only: file rows by entry index, and the per-entry destination redirects (absolute
+    /// staging paths) the shim's `destination_override` callback serves. Empty for zip.
+    private let rowsByIndex: [Int: ExtractRowRef]
+    private let overridePathsByIndex: [Int: String]
     /// Encrypted entries in pre-RAR5 formats only — RAR5 verifies passwords up front (check
     /// value), so only legacy formats can masquerade a wrong password as a CRC failure.
     private let legacyEncryptedNames: Set<String>
+    private let legacyEncryptedIndices: Set<Int>
     private let totalBytes: UInt64
     private var doneBytes: UInt64 = 0
     private var lastPermille = -1
@@ -195,6 +213,7 @@ final class ExtractBridge: @unchecked Sendable {
     private var skippedCount = 0
     private var allFailuresWereLegacyEncrypted = true
     private var missingVolumeName: String?
+    private var visitedVolumePaths: [String] = []
 
     let broker: PasswordBroker
     let token: ExtractCancelToken
@@ -205,7 +224,10 @@ final class ExtractBridge: @unchecked Sendable {
         legacyEncryptedNames: Set<String>,
         totalBytes: UInt64,
         broker: PasswordBroker,
-        token: ExtractCancelToken
+        token: ExtractCancelToken,
+        rowsByIndex: [Int: ExtractRowRef] = [:],
+        legacyEncryptedIndices: Set<Int> = [],
+        overridePathsByIndex: [Int: String] = [:]
     ) {
         self.continuation = continuation
         self.idsByName = idsByName
@@ -213,11 +235,27 @@ final class ExtractBridge: @unchecked Sendable {
         self.totalBytes = totalBytes
         self.broker = broker
         self.token = token
+        self.rowsByIndex = rowsByIndex
+        self.legacyEncryptedIndices = legacyEncryptedIndices
+        self.overridePathsByIndex = overridePathsByIndex
     }
 
-    func fileStart(_ name: String) {
-        if let id = idsByName[name] {
-            continuation.yield(.fileStatusChanged(id: id, status: .checking))
+    /// Index-first row lookup (RAR); zip passes no index and keys by name.
+    private func row(index: Int?, name: String) -> (id: UUID, displayName: String)? {
+        if let index, let ref = rowsByIndex[index] { return (ref.id, ref.name) }
+        if let id = idsByName[name] { return (id, name) }
+        return nil
+    }
+
+    /// The absolute destination path this entry must be redirected to, or nil for the
+    /// engine's default placement. Served to the shim's `destination_override` callback.
+    func overridePath(forEntry index: Int) -> String? {
+        overridePathsByIndex[index]
+    }
+
+    func fileStart(_ name: String, index: Int? = nil) {
+        if let row = row(index: index, name: name) {
+            continuation.yield(.fileStatusChanged(id: row.id, status: .checking))
         }
     }
 
@@ -242,7 +280,9 @@ final class ExtractBridge: @unchecked Sendable {
     /// Engine code 21 (UNRARSHIM_UNKNOWN_ERROR) on a per-file basis means the entry was
     /// SKIPPED with a warning (e.g. an unsafe/absolute symlink the engine never extracts) —
     /// reported, but it must not read as data damage.
-    func fileDone(_ name: String, code: Int32) {
+    func fileDone(_ name: String, code: Int32, index: Int? = nil) {
+        let legacyEncrypted =
+            index.map { legacyEncryptedIndices.contains($0) } ?? legacyEncryptedNames.contains(name)
         lock.lock()
         if code == 0 {
             succeededCount += 1
@@ -250,18 +290,20 @@ final class ExtractBridge: @unchecked Sendable {
             skippedCount += 1
         } else {
             failedCount += 1
-            if !legacyEncryptedNames.contains(name) { allFailuresWereLegacyEncrypted = false }
+            if !legacyEncrypted { allFailuresWereLegacyEncrypted = false }
         }
         lock.unlock()
-        guard let id = idsByName[name] else { return }
+        guard let row = row(index: index, name: name) else { return }
         if code == 0 {
-            continuation.yield(.fileStatusChanged(id: id, status: .ok))
+            continuation.yield(.fileStatusChanged(id: row.id, status: .ok))
         } else if code == Int32(UNRARSHIM_UNKNOWN_ERROR.rawValue) {
-            continuation.yield(.fileStatusChanged(id: id, status: .notInSet))
-            continuation.yield(.logLine("Skipped \"\(name)\" (link or unsupported entry)."))
+            continuation.yield(.fileStatusChanged(id: row.id, status: .notInSet))
+            continuation.yield(
+                .logLine("Skipped \"\(row.displayName)\" (link or unsupported entry)."))
         } else {
-            continuation.yield(.fileStatusChanged(id: id, status: .unrecoverableCorrupt))
-            continuation.yield(.logLine("Failed to extract \"\(name)\" (code \(code))."))
+            continuation.yield(.fileStatusChanged(id: row.id, status: .unrecoverableCorrupt))
+            continuation.yield(
+                .logLine("Failed to extract \"\(row.displayName)\" (code \(code))."))
         }
     }
 
@@ -283,8 +325,20 @@ final class ExtractBridge: @unchecked Sendable {
     }
 
     func volumeChanged(_ name: String) {
+        // Remembered for segment disposal: only volumes the engine actually visited (plus
+        // the opened first volume) may ever be trashed/deleted. (ROADMAP Phase 7)
+        lock.lock()
+        visitedVolumePaths.append(name)
+        lock.unlock()
         continuation.yield(
             .logLine("Continuing in volume \((name as NSString).lastPathComponent)."))
+    }
+
+    /// Full paths of every volume the engine switched to during the extract pass.
+    var visitedVolumes: [String] {
+        lock.lock()
+        defer { lock.unlock() }
+        return visitedVolumePaths
     }
 
     func noteMissingVolume(_ name: String) {

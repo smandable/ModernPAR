@@ -47,6 +47,24 @@ the corrupt one was silently dropped):
      success tail re-reports it for every following header, aborting
      keep-extracting loops — good files after the corrupt one were silently
      dropped while partial output was still delivered.
+  4. arcread.cpp ReadHeader15 FILE-header branch (right after ConvertFileHeader):
+     one block-scoped call to ModernPARCaptureRawEntryName(FileName.data(),
+     strlen(FileName.data()), (hd->Flags & LHD_UNICODE)!=0), the hook being
+     declared `extern` inside the same block and defined in ../UnrarShim.cpp.
+     RAR 1.5-4.x headers without LHD_UNICODE store the name in an OEM/regional
+     codepage only; on _APPLE CharToWide is UTF-8 (unicode.cpp UtfToWide), which
+     TRUNCATES at the first invalid byte — an all-Cyrillic CP866 name reaches
+     the DLL surface as an EMPTY FileNameW (and extraction of it then fails the
+     whole run with ERAR_ECREATE), with the original bytes unrecoverable. The
+     hook hands the raw bytes + the Unicode-name fact to the shim, which
+     surfaces them per entry (UnrarShimEntry.raw_name/name_had_unicode) so
+     ArchiveKit can decode legacy names with a user-chosen charset and redirect
+     those entries via the dll DestName contract (RARProcessFileW 4th argument —
+     a public DLL capability, no patch needed for the redirect itself).
+     Reproduced by the synthesized CP866 RAR 1.5-format fixtures built in
+     ArchiveKitTests/FilenameEncodingTests.swift. ReadHeader14 (ancient RAR 1.4
+     archives) is deliberately not patched; such entries keep reporting
+     name_had_unicode=1 / raw_name=NULL, i.e. today's behavior.
 Related (shim-side, not a vendor patch): UnrarShim.cpp calls ErrHandler.Clean()
 before each header read because the engine's global error state is sticky and
 both call tails convert it into per-call return codes; and treats per-call

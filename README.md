@@ -6,11 +6,13 @@ when Apple retires Rosetta 2).
 
 Built with **Swift 6 + SwiftUI** (Xcode 26, macOS 14+).
 
-> Status: **Phases 0–6 complete** — the full consume *and* author path works natively. Verify,
-> repair, RAR/zip extraction, auto post-processing, and PAR2 creation are all wired to real
-> engines and exercised by 205 tests (including cross-tool checks against `par2cmdline`).
-> Remaining work is the Preferences surface + rule editor (Phase 7) and notarized distribution
-> (Phase 9). See [docs/ROADMAP.md](docs/ROADMAP.md).
+> Status: **Phases 0–7 complete** — the full consume *and* author path works natively, plus the
+> entire preference surface: six Settings tabs persisted under the original's defaults keys, the
+> post-process rule editor (open-in-Finder / open-with-app actions, pinned built-in Unrar rule),
+> unattended operation, segment disposal, legacy RAR filename-encoding recovery, and one-by-one
+> multi-open. 277 tests (including cross-tool checks against `par2cmdline`). Remaining work is
+> native PAR1 recovery + polish (Phase 8) and notarized distribution (Phase 9).
+> See [docs/ROADMAP.md](docs/ROADMAP.md).
 
 ## What it does
 

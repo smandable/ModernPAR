@@ -29,14 +29,19 @@ enum PasswordPrompt {
 
 /// Bridges the engine's async password request to the modal prompt on the main actor.
 /// The engine thread waits cooperatively (cancellable) while the prompt is up.
+/// Unattended operation never prompts — it declines, the original's "empty password" safe
+/// default (the run fails with password-needed instead of blocking on a dialog).
 public final class UIPasswordProvider: PasswordProvider {
     private let previousAttemptFailed: Bool
+    private let unattended: Bool
 
-    public init(previousAttemptFailed: Bool = false) {
+    public init(previousAttemptFailed: Bool = false, unattended: Bool = false) {
         self.previousAttemptFailed = previousAttemptFailed
+        self.unattended = unattended
     }
 
     public func password(forVolume name: String) async -> String? {
+        guard !unattended else { return nil }
         let failed = previousAttemptFailed
         return await MainActor.run {
             PasswordPrompt.present(archiveName: name, previousAttemptFailed: failed)
@@ -44,13 +49,22 @@ public final class UIPasswordProvider: PasswordProvider {
     }
 }
 
-/// The destination-conflict dialog: ask / overwrite / keep-both / cancel. (ROADMAP Phase 4;
-/// the per-preference default answer arrives with the Phase 7 Settings work.)
+/// The destination-conflict dialog: ask / overwrite / keep-both / cancel. The persisted
+/// default answer (`existingUnrarDestinationAction`, doc-01 §5.4) auto-answers without a
+/// dialog; unattended operation forces the keep-both safe default. (ROADMAP Phase 7)
 public struct UIConflictResolver: ConflictResolver {
-    public init() {}
+    private let defaultPolicy: ConflictPolicy
+    private let unattended: Bool
+
+    public init(defaultPolicy: ConflictPolicy = .ask, unattended: Bool = false) {
+        self.defaultPolicy = defaultPolicy
+        self.unattended = unattended
+    }
 
     public func resolve(conflictAt url: URL) async -> ConflictPolicy {
-        await MainActor.run {
+        if unattended { return .keepBoth }
+        if defaultPolicy != .ask { return defaultPolicy }
+        return await MainActor.run {
             let alert = NSAlert()
             alert.messageText = "“\(url.lastPathComponent)” already exists"
             alert.informativeText =
@@ -99,6 +113,22 @@ public final class ExtractionNotifier: NSObject, UNUserNotificationCenterDelegat
         content.userInfo = ["path": url.path]
         content.categoryIdentifier = "extraction-finished"
         content.sound = .default
+        post(content)
+    }
+
+    /// Unattended operation surfaces errors as notifications instead of dialogs
+    /// (doc-01 §5.1 `UnattendedOperation`).
+    public func notifyFailure(documentName: String, status: String) {
+        guard Bundle.main.bundleIdentifier != nil else { return }
+        prepare()
+        let content = UNMutableNotificationContent()
+        content.title = "ModernPAR could not process “\(documentName)”"
+        content.body = status
+        content.sound = .default
+        post(content)
+    }
+
+    private func post(_ content: UNMutableNotificationContent) {
         let center = UNUserNotificationCenter.current()
         // Post from the authorization completion: adding while authorization is still
         // undetermined silently drops the very first notification.

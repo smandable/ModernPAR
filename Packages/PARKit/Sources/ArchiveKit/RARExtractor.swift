@@ -17,17 +17,7 @@ import ModernPARCore
 ///     Staging means a cancelled or failed run never leaves half-written output mixed into the
 ///     user's folder, and "keep both" is a simple rename.
 public final class RARExtractor: ArchiveExtractor, Sendable {
-    /// "Keep broken files" preference: when true, files failing their checksum stay on disk.
-    /// Read at the start of each run so the Settings toggle takes effect without re-injection.
-    private let keepBrokenFiles: @Sendable () -> Bool
-
-    public init(keepBrokenFiles: Bool = false) {
-        self.keepBrokenFiles = { keepBrokenFiles }
-    }
-
-    public init(keepBrokenFiles provider: @escaping @Sendable () -> Bool) {
-        self.keepBrokenFiles = provider
-    }
+    public init() {}
 
     /// All RAR runs serialize here — see the type comment.
     private static let queue = DispatchQueue(
@@ -35,12 +25,11 @@ public final class RARExtractor: ArchiveExtractor, Sendable {
 
     public func extract(
         _ archive: SessionRoute,
-        to destination: ExtractDestination,
+        options: ExtractOptions,
         password: any PasswordProvider,
         conflicts: any ConflictResolver
     ) -> AsyncStream<EngineEvent> {
-        let keepBroken = keepBrokenFiles()
-        return AsyncStream { continuation in
+        AsyncStream { continuation in
             let token = ExtractCancelToken()
             continuation.onTermination = { _ in token.cancel() }
             Self.queue.async {
@@ -49,8 +38,8 @@ public final class RARExtractor: ArchiveExtractor, Sendable {
                 EngineDrainRegistry.shared.enter()
                 defer { EngineDrainRegistry.shared.leave() }
                 Self.execute(
-                    route: archive, destination: destination, password: password,
-                    conflicts: conflicts, keepBroken: keepBroken,
+                    route: archive, options: options, password: password,
+                    conflicts: conflicts,
                     token: token, continuation: continuation)
                 continuation.finish()
             }
@@ -61,13 +50,14 @@ public final class RARExtractor: ArchiveExtractor, Sendable {
 
     private static func execute(
         route: SessionRoute,
-        destination: ExtractDestination,
+        options: ExtractOptions,
         password: any PasswordProvider,
         conflicts: any ConflictResolver,
-        keepBroken: Bool,
         token: ExtractCancelToken,
         continuation: AsyncStream<EngineEvent>.Continuation
     ) {
+        let destination = options.destination
+        let keepBroken = options.keepBrokenFiles
         guard route.mode == .extractArchive else {
             continuation.yield(.finished(.failure(.notImplemented)))
             return
@@ -110,13 +100,20 @@ public final class RARExtractor: ArchiveExtractor, Sendable {
         case .besideArchive:
             destFolder = firstVolume.deletingLastPathComponent()
         case .fixed(let bookmark):
-            guard let resolved = try? ScopedAccess.resolve(bookmark) else {
+            // A STALE bookmark means the chosen folder moved — typically into the Trash,
+            // which the bookmark silently follows (file-ID resolution). Honor the documented
+            // contract instead: a missing-or-moved fixed destination degrades to
+            // beside-the-archive, visibly. (Phase 7 review)
+            if let resolved = try? ScopedAccess.resolve(bookmark), !resolved.isStale {
+                if resolved.didStart { scopeStops.append(resolved.url) }
+                destFolder = resolved.url
+            } else {
                 continuation.yield(
-                    .finished(.failure(.launchFailed("the destination folder is unavailable"))))
-                return
+                    .logLine(
+                        "The configured destination folder is unavailable or has moved — extracting beside the archive instead."
+                    ))
+                destFolder = firstVolume.deletingLastPathComponent()
             }
-            if resolved.didStart { scopeStops.append(resolved.url) }
-            destFolder = resolved.url
         case .ask:
             // The UI resolves "ask" to a concrete folder before starting the engine.
             continuation.yield(
@@ -144,18 +141,38 @@ public final class RARExtractor: ArchiveExtractor, Sendable {
         }
 
         let entries = collector.collected
-        let files = entries.filter { !$0.isDirectory }
-        let rows = files.map { FileEntry(name: $0.name, sizeBytes: $0.unpackedSize) }
-        // First-wins on duplicate names (archives may legitimately contain duplicates).
-        var idsByName: [String: UUID] = [:]
-        for (entry, row) in zip(files, rows) where idsByName[entry.name] == nil {
-            idsByName[entry.name] = row.id
+        // Legacy-codepage names (pre-RAR5 headers without a Unicode variant whose raw bytes
+        // are not UTF-8): resolve the decode once per run — possibly prompting through the
+        // run's encoding picker — and redirect those entries to decoded paths in staging.
+        // Valid-UTF-8 names and RAR5 archives produce an empty plan. (ROADMAP Phase 7)
+        let decodePlan = LegacyFilenameDecoder.plan(
+            for: entries, preference: options.filenameEncoding, picker: options.encodingPicker,
+            token: token, continuation: continuation)
+        if token.isCancelled {
+            continuation.yield(.finished(.failure(.cancelled)))
+            return
         }
+
+        // Rows and outcome bookkeeping key on the archive-order entry index (the shim's
+        // entry_index): legacy mangled names collide or come out empty, so names cannot
+        // identify entries. Rows display the decoded name where one applies.
+        var rows: [FileEntry] = []
+        var rowsByIndex: [Int: ExtractRowRef] = [:]
+        var legacyEncryptedIndices: Set<Int> = []
         // Hostile headers can declare absurd sizes; the sum is only a progress denominator,
         // so saturate instead of trapping the whole app.
-        let totalBytes = files.reduce(UInt64(0)) { total, file in
-            let (sum, overflow) = total.addingReportingOverflow(file.unpackedSize)
-            return overflow ? UInt64.max : sum
+        var totalBytes: UInt64 = 0
+        for (index, entry) in entries.enumerated() where !entry.isDirectory {
+            let row = FileEntry(
+                name: decodePlan.relativePaths[index] ?? entry.name,
+                sizeBytes: entry.unpackedSize)
+            rows.append(row)
+            rowsByIndex[index] = ExtractRowRef(id: row.id, name: row.name)
+            // The wrong-password heuristic only applies to pre-RAR5 entries: RAR5 stores a
+            // password check value, so its BAD_DATA with a working password IS data damage.
+            if entry.isEncrypted && entry.unpVersion < 50 { legacyEncryptedIndices.insert(index) }
+            let (sum, overflow) = totalBytes.addingReportingOverflow(entry.unpackedSize)
+            totalBytes = overflow ? UInt64.max : sum
         }
 
         continuation.yield(.scanningStarted(totalFiles: rows.count))
@@ -182,12 +199,13 @@ public final class RARExtractor: ArchiveExtractor, Sendable {
         defer { try? FileManager.default.removeItem(at: staging) }
 
         let bridge = ExtractBridge(
-            continuation: continuation, idsByName: idsByName,
-            // The wrong-password heuristic only applies to pre-RAR5 entries: RAR5 stores a
-            // password check value, so its BAD_DATA with a working password IS data damage.
-            legacyEncryptedNames: Set(
-                files.filter { $0.isEncrypted && $0.unpVersion < 50 }.map(\.name)),
-            totalBytes: totalBytes, broker: broker, token: token)
+            continuation: continuation, idsByName: [:], legacyEncryptedNames: [],
+            totalBytes: totalBytes, broker: broker, token: token,
+            rowsByIndex: rowsByIndex, legacyEncryptedIndices: legacyEncryptedIndices,
+            // Decoded redirects become absolute now that the staging folder exists.
+            overridePathsByIndex: decodePlan.relativePaths.mapValues {
+                staging.appendingPathComponent($0).path
+            })
         let result = extractArchive(
             at: firstVolume, into: staging, keepBroken: keepBroken, bridge: bridge)
 
@@ -234,6 +252,20 @@ public final class RARExtractor: ArchiveExtractor, Sendable {
                         ))
                     yieldExtractFailure(terminalError, continuation: continuation)
                 } else {
+                    // Warning-class skips (e.g. unsafe symlinks) leave the run "successful"
+                    // but PARTIALLY delivered — the volumes must survive so the user can
+                    // extract the rest elsewhere. (Phase 7 review)
+                    if bridge.skipped == 0 {
+                        disposeSegments(
+                            options.segmentDisposal, firstVolume: firstVolume,
+                            visitedVolumes: bridge.visitedVolumes, placedOutput: url,
+                            continuation: continuation)
+                    } else if options.segmentDisposal != .leave {
+                        continuation.yield(
+                            .logLine(
+                                "Leaving the archive segments in place — not every entry was extracted."
+                            ))
+                    }
                     continuation.yield(.docStatusChanged(.extractedSuccessfully))
                     continuation.yield(.finished(.success(OperationSummary())))
                 }
@@ -244,7 +276,20 @@ public final class RARExtractor: ArchiveExtractor, Sendable {
                 return
             case .nothingToPlace:
                 if terminalError == nil {
-                    // An archive of empty directories (or no entries) still "succeeds".
+                    // An archive of empty directories (or no entries) still "succeeds" —
+                    // but if entries were SKIPPED, the user received nothing of substance
+                    // and the volumes are their only copy: never dispose. (Phase 7 review)
+                    if bridge.skipped == 0 {
+                        disposeSegments(
+                            options.segmentDisposal, firstVolume: firstVolume,
+                            visitedVolumes: bridge.visitedVolumes, placedOutput: nil,
+                            continuation: continuation)
+                    } else if options.segmentDisposal != .leave {
+                        continuation.yield(
+                            .logLine(
+                                "Leaving the archive segments in place — not every entry was extracted."
+                            ))
+                    }
                     continuation.yield(.docStatusChanged(.extractedSuccessfully))
                     continuation.yield(.logLine("The archive contained no extractable files."))
                     continuation.yield(.finished(.success(OperationSummary())))
@@ -266,6 +311,74 @@ public final class RARExtractor: ArchiveExtractor, Sendable {
             continuation: continuation)
     }
 
+    // MARK: - Segment disposal (ROADMAP Phase 7; doc-01 §5.4 "delete segments")
+
+    /// Disposes the extracted set's volume files after a FULLY successful run (and only
+    /// then — partial failures, wrong passwords and cancels never reach here, so a
+    /// re-prompt-and-retry always still finds its volumes). Eligible are exactly the
+    /// volumes the engine visited during the extract pass plus the opened first volume,
+    /// each re-checked against set membership and the placed output. A failed trash
+    /// NEVER escalates to deletion (network volumes without a Trash leave the file and
+    /// say so). Runs while the operation's security scopes are still active.
+    private static func disposeSegments(
+        _ disposal: SegmentDisposal,
+        firstVolume: URL,
+        visitedVolumes: [String],
+        placedOutput: URL?,
+        continuation: AsyncStream<EngineEvent>.Continuation
+    ) {
+        guard disposal != .leave else { return }
+        let manager = FileManager.default
+        var volumes: [URL] = []
+        var seen = Set<String>()
+        for url in [firstVolume] + visitedVolumes.map(URL.init(fileURLWithPath:)) {
+            guard seen.insert(url.standardizedFileURL.path.lowercased()).inserted else {
+                continue
+            }
+            // Belt and suspenders: never a similarly-named unrelated file, never the
+            // placed output (the reserved-target rename should make that impossible).
+            guard RARVolumes.belongsToSet(url, firstVolume: firstVolume) else { continue }
+            if let placedOutput, samePath(url, placedOutput) { continue }
+            guard manager.fileExists(atPath: url.path) else { continue }
+            volumes.append(url)
+        }
+        guard !volumes.isEmpty else { return }
+
+        var disposed = 0
+        for url in volumes {
+            do {
+                switch disposal {
+                case .leave:
+                    return
+                case .moveToTrash:
+                    try manager.trashItem(at: url, resultingItemURL: nil)
+                case .deletePermanently:
+                    try manager.removeItem(at: url)
+                }
+                disposed += 1
+            } catch {
+                continuation.yield(
+                    .logLine(
+                        disposal == .moveToTrash
+                            ? "Could not move \(url.lastPathComponent) to the Trash — leaving it in place."
+                            : "Could not delete \(url.lastPathComponent): \(error.localizedDescription)"
+                    ))
+            }
+        }
+        guard disposed > 0 else { return }
+        continuation.yield(
+            .logLine(
+                disposal == .moveToTrash
+                    ? "Moved \(disposed) segment(s) to the Trash."
+                    : "Deleted \(disposed) segment(s)."))
+    }
+
+    /// Path equality across the /var → /private/var symlink and standardization differences.
+    private static func samePath(_ a: URL, _ b: URL) -> Bool {
+        a.resolvingSymlinksInPath().standardizedFileURL.path
+            == b.resolvingSymlinksInPath().standardizedFileURL.path
+    }
+
     // MARK: - Shim calls
 
     private static func listArchive(
@@ -278,13 +391,19 @@ public final class RARExtractor: ArchiveExtractor, Sendable {
             guard let context, let entry = entry?.pointee, let name = entry.name_utf8 else {
                 return
             }
+            // raw_name points into shim storage that only lives for this callback — copy.
+            var rawNameBytes: [UInt8]?
+            if entry.name_had_unicode == 0, let raw = entry.raw_name, entry.raw_name_size > 0 {
+                rawNameBytes = Array(UnsafeBufferPointer(start: raw, count: entry.raw_name_size))
+            }
             Unmanaged<ListCollector>.fromOpaque(context).takeUnretainedValue().add(
                 RAREntry(
                     name: String(cString: name),
                     unpackedSize: entry.unpacked_size,
                     isDirectory: entry.is_directory != 0,
                     isEncrypted: entry.is_encrypted != 0,
-                    unpVersion: Int(entry.unp_version)))
+                    unpVersion: Int(entry.unp_version),
+                    rawNameBytes: rawNameBytes))
         }
         callbacks.volume_missing = { context, name in
             guard let context, let name else { return }
@@ -316,15 +435,21 @@ public final class RARExtractor: ArchiveExtractor, Sendable {
         let context = Unmanaged.passUnretained(bridge).toOpaque()
         var callbacks = UnrarShimCallbacks()
         callbacks.context = context
-        callbacks.file_start = { context, name, _ in
+        callbacks.file_start = { context, index, name, _ in
             guard let context, let name else { return }
             Unmanaged<ExtractBridge>.fromOpaque(context).takeUnretainedValue()
-                .fileStart(String(cString: name))
+                .fileStart(String(cString: name), index: Int(index))
         }
-        callbacks.file_done = { context, name, code in
+        callbacks.file_done = { context, index, name, code in
             guard let context, let name else { return }
             Unmanaged<ExtractBridge>.fromOpaque(context).takeUnretainedValue()
-                .fileDone(String(cString: name), code: code)
+                .fileDone(String(cString: name), code: code, index: Int(index))
+        }
+        callbacks.destination_override = { context, index, _, buf, size in
+            guard let context else { return 0 }
+            let bridge = Unmanaged<ExtractBridge>.fromOpaque(context).takeUnretainedValue()
+            return RARExtractor.fill(
+                buffer: buf, size: size, with: bridge.overridePath(forEntry: Int(index)))
         }
         callbacks.bytes_extracted = { context, bytes in
             guard let context else { return }
@@ -359,14 +484,15 @@ public final class RARExtractor: ArchiveExtractor, Sendable {
         }
     }
 
-    /// Copies a password into the engine's callback buffer; 0 declines.
+    /// Copies a UTF-8 string (password / destination override) into the engine's callback
+    /// buffer; 0 declines the request (which keeps the engine default for overrides).
     private static func fill(
-        buffer: UnsafeMutablePointer<CChar>?, size: Int, with password: String?
+        buffer: UnsafeMutablePointer<CChar>?, size: Int, with value: String?
     ) -> Int32 {
-        guard let buffer, size > 0, let password, !password.isEmpty,
-            password.utf8.count < size
+        guard let buffer, size > 0, let value, !value.isEmpty,
+            value.utf8.count < size
         else { return 0 }
-        _ = password.withCString { strlcpy(buffer, $0, size) }
+        _ = value.withCString { strlcpy(buffer, $0, size) }
         return 1
     }
 

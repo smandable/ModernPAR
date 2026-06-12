@@ -327,6 +327,39 @@ These are the load-bearing calls that the phases below assume. Each resolves a r
 
 **Goal.** Full preference surface and the extensible rule engine.
 
+> **Status: DONE (2026-06-12).** All six Settings tabs (Basic / Par 1 / Par 2 / Unrar /
+> Post-processing / Other), every knob UserDefaults-backed under the ORIGINAL defaults key
+> (doc-01 §5; `unrar.keepBrokenFiles` migrated to `KeepBrokenFiles`), defaults matching the
+> original where carried over (segments default to move-to-Trash). The rule editor
+> (New/Modify/Delete/Up/Down/Standard) with "Open in Finder" and "Open with application"
+> actions; the built-in Unrar rule is now ALWAYS-LAST and non-editable/non-deletable
+> (structural — it is never stored), reconciling Phase 5's deliberate rar-first divergence:
+> a set carrying both `.zip` and `.rar` now consumes the zip, as the original did. User rules
+> may also target the built-in extractors (e.g. `*.cbr` → Unrar). Implemented behaviors:
+> AutoDeletePnn (restore-only, Trash-only, never on a plain all-OK verify), AutoCloseDocument
+> (after the automatic chain ends green; cancel disarms), UnattendedOperation (every prompt —
+> password, conflict, destination, encoding, and the folder-grant panel — declines to a safe
+> default and failures arrive as notifications), unrar destination (beside / ask / fixed
+> folder, with a STALE-bookmark fallback because security-scoped bookmarks follow a moved or
+> trashed folder by file ID), conflict-default auto-answer, segment disposal (trash / leave /
+> delete-permanently behind a real confirmation; only FULLY delivered runs dispose — skipped
+> entries keep the volumes), the one-by-one multi-open queue (`MultiOpenQueue` + the
+> session's `runEnded` settlement signal; the claimant's first file queues too), Edit ▸ Copy
+> file names (`.copyable`) and Select All Non-OK, window-size + Table column persistence, and
+> the `DefaultPar` launch route (create windows host the open-files handler so Finder opens
+> are never swallowed). **RAR filename encoding:** vendored UnRAR's UTF-8 `CharToWide`
+> TRUNCATES legacy codepage names at the first invalid byte — such archives previously failed
+> extraction entirely; the shim now captures raw header name bytes (vendor LOCAL PATCH #4)
+> and redirects affected entries to properly decoded paths via the DLL's per-entry DestName
+> (curated 13-charset candidate sheet, `PrefFilenameEncoding`, lossy-UTF-8 fallback; tested
+> end-to-end over synthesized RAR 1.5 archives). The 25-agent adversarial review confirmed 11
+> distinct findings (2 high: a directory entry silently REPLACING an extracted file under the
+> forced-overwrite DLL — data loss with a success verdict; the multi-open queue poisoned
+> forever by a cancelled destination panel) — all fixed with regression tests, 1 finding
+> refuted by a runtime probe, 3 nits fixed. 277 tests green. Deferred: the Terminal/
+> AppleScript rule action (dropped for v1 by design), CPU-core limit [later], live rule-list
+> sync while the Settings window and a running chain race (none observed).
+
 **Tasks.**
 - `Settings` scene `TabView`: Basic / Par1 / Par2 / Unrar / Post-processing / Other. Back with `@AppStorage` + `@Observable Settings`. Map to the original defaults keys (doc-01 §5): `AutoDeletePnn`, `AutoCloseDocument`, `DefaultPar`, `UnattendedOperation`, `Par2Redundancy`/`Par2BlockSize`/`Par2BlockSizeChoice`/`Par2LimitFileSize`, `KeepBrokenFiles`, `chooseUnrarDestinationFolder`, `existingUnrarDestinationAction`, `AutoDeleteSeg`/`DeleteSegOption`, `AutoPostProcess`, `SimultaneousProcessing`.
 - Rule editor (`EditPPRuleController` equivalent): New/Modify/Delete/Up/Down/Standard; action types "Open in Finder" and "Open with app." **Drop** the Terminal/AppleScript action for v1; if added later, use `Process`/`NSUserUnixTask` with inline output (keep `%1`/`A` macro compat), never AppleScript-driven Terminal.

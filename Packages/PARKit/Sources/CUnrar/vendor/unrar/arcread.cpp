@@ -368,6 +368,19 @@ size_t Archive::ReadHeader15()
           ConvertNameCase(hd->FileName);
 #endif
           ConvertFileHeader(hd);
+
+          // LOCAL PATCH (ModernPAR, see ../VENDORED.txt #4): surface the raw
+          // on-disk name bytes and whether this header carried a real Unicode
+          // name. On _APPLE CharToWide is UTF-8, so a codepage-only name (no
+          // LHD_UNICODE) is truncated at its first non-UTF-8 byte above and
+          // the original bytes would be lost through the DLL surface. The
+          // hook is defined in ../../UnrarShim.cpp.
+          {
+            extern void ModernPARCaptureRawEntryName(const char *Bytes,size_t Size,
+                                                     bool HadUnicode);
+            ModernPARCaptureRawEntryName(FileName.data(),strlen(FileName.data()),
+                                         (hd->Flags & LHD_UNICODE)!=0);
+          }
         }
         else
         {

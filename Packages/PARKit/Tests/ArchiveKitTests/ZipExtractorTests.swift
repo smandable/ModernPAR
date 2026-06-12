@@ -42,10 +42,10 @@ struct ZipExtractorTests {
         in existingFolder: URL? = nil
     ) async throws -> (events: [EngineEvent], folder: URL) {
         let folder = try existingFolder ?? stage([archive])
-        let extractor = ZipExtractor(keepBrokenFiles: keepBroken)
+        let extractor = ZipExtractor()
         let stream = extractor.extract(
             try route(anchor: folder.appendingPathComponent(archive), folder: folder),
-            to: .besideArchive,
+            options: ExtractOptions(keepBrokenFiles: keepBroken),
             password: password,
             conflicts: AutoConflictResolver(conflicts))
         var events: [EngineEvent] = []
@@ -268,7 +268,7 @@ struct ZipExtractorTests {
         defer { try? FileManager.default.removeItem(at: folder) }
         let stream = ZipExtractor().extract(
             try route(anchor: folder.appendingPathComponent("zipcrypto.zip"), folder: folder),
-            to: .besideArchive,
+            options: ExtractOptions(),
             password: HangingPasswordProvider(),
             conflicts: AutoConflictResolver(.cancel))
         let consumer = Task {

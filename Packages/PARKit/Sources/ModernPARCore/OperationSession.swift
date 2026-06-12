@@ -28,6 +28,7 @@ public final class OperationSession {
         case verify(autoRepair: Bool)
         case extract(
             extractor: any ArchiveExtractor,
+            options: ExtractOptions,
             password: any PasswordProvider,
             conflicts: any ConflictResolver,
             preservingHistory: Bool)
@@ -46,6 +47,12 @@ public final class OperationSession {
     /// trigger (ROADMAP Phase 5). Extraction runs never bump it, so a chained extraction's
     /// own green end state cannot re-fire the chain.
     public private(set) var postProcessReady = 0
+    /// Bumped whenever the session reaches a point where no further work will START ITSELF:
+    /// a run finished, an open parsed without chaining a verify, a folder grant was declined,
+    /// or a busy run was cancelled. The one-by-one multi-open queue settles on this — after a
+    /// runloop tick, so a chain/retry fired by the same event has already re-marked the
+    /// session busy. (doc-01 §5.6 `SimultaneousProcessing`; ROADMAP Phase 7)
+    public private(set) var runEnded = 0
 
     /// Which kind of operation the current/last run was — post-processing only chains off
     /// verify/repair, and the UI's archive affordances key off extraction.
@@ -140,6 +147,8 @@ public final class OperationSession {
             {
                 docStatus = .waitingToStart
             }
+            // A cancelled run ends the pipeline; the multi-open queue must not wait forever.
+            runEnded += 1
         }
     }
 
@@ -149,7 +158,7 @@ public final class OperationSession {
     public func startExtract(
         _ route: SessionRoute,
         using extractor: any ArchiveExtractor,
-        destination: ExtractDestination = .besideArchive,
+        options: ExtractOptions = ExtractOptions(),
         password: any PasswordProvider,
         conflicts: any ConflictResolver,
         preservingHistory: Bool = false
@@ -169,7 +178,7 @@ public final class OperationSession {
         // arrives — RAR runs serialize process-wide, so this run may be QUEUED behind another
         // window's extraction and must not claim to be extracting while it waits.
         let stream = extractor.extract(
-            route, to: destination, password: password, conflicts: conflicts)
+            route, options: options, password: password, conflicts: conflicts)
         task = Task { [weak self] in
             await self?.consume(stream)
             guard !Task.isCancelled else { return }
@@ -215,6 +224,7 @@ public final class OperationSession {
     public func openArchive(
         _ url: URL,
         using extractor: any ArchiveExtractor,
+        options: ExtractOptions = ExtractOptions(),
         password: any PasswordProvider,
         conflicts: any ConflictResolver
     ) {
@@ -223,12 +233,13 @@ public final class OperationSession {
         openedURL = url
         anchorURL = url
         log.append("Opened archive \(url.lastPathComponent).")
-        requestExtract(using: extractor, password: password, conflicts: conflicts)
+        requestExtract(using: extractor, options: options, password: password, conflicts: conflicts)
     }
 
     /// The grant-aware extraction entry point (mirror of `requestVerify`).
     public func requestExtract(
         using extractor: any ArchiveExtractor,
+        options: ExtractOptions = ExtractOptions(),
         password: any PasswordProvider,
         conflicts: any ConflictResolver,
         preservingHistory: Bool = false
@@ -236,12 +247,12 @@ public final class OperationSession {
         guard anchorURL != nil, !isBusy else { return }
         if needsFolderGrant {
             pendingGrantAction = .extract(
-                extractor: extractor, password: password, conflicts: conflicts,
+                extractor: extractor, options: options, password: password, conflicts: conflicts,
                 preservingHistory: preservingHistory)
             awaitingFolderGrant = true
         } else {
             startExtractFromAnchor(
-                using: extractor, password: password, conflicts: conflicts,
+                using: extractor, options: options, password: password, conflicts: conflicts,
                 preservingHistory: preservingHistory)
         }
     }
@@ -253,6 +264,7 @@ public final class OperationSession {
         _ archiveURL: URL,
         ruleName: String,
         using extractor: any ArchiveExtractor,
+        options: ExtractOptions = ExtractOptions(),
         password: any PasswordProvider,
         conflicts: any ConflictResolver
     ) {
@@ -260,12 +272,14 @@ public final class OperationSession {
         anchorURL = archiveURL
         log.append("Post-processing (\(ruleName)): extracting \(archiveURL.lastPathComponent).")
         requestExtract(
-            using: extractor, password: password, conflicts: conflicts, preservingHistory: true)
+            using: extractor, options: options, password: password, conflicts: conflicts,
+            preservingHistory: true)
     }
 
     /// Runs the extractor against the opened archive, minting fresh security-scoped bookmarks.
     private func startExtractFromAnchor(
         using extractor: any ArchiveExtractor,
+        options: ExtractOptions = ExtractOptions(),
         password: any PasswordProvider,
         conflicts: any ConflictResolver,
         preservingHistory: Bool = false
@@ -274,7 +288,7 @@ public final class OperationSession {
         var route = SessionRoute(mode: .extractArchive)
         mintBookmarks(into: &route, anchor: anchorURL)
         startExtract(
-            route, using: extractor, password: password, conflicts: conflicts,
+            route, using: extractor, options: options, password: password, conflicts: conflicts,
             preservingHistory: preservingHistory)
     }
 
@@ -288,6 +302,53 @@ public final class OperationSession {
     /// Appends an informational line to the output pane (post-process decisions, etc.).
     public func note(_ line: String) {
         log.append(line)
+    }
+
+    /// The `AutoDeletePnn` trigger: par files are swept only after an actual RESTORE — a
+    /// plain all-OK verify of a set the user means to keep must leave them alone (the
+    /// preference's own label: "after a successful restore"). (doc-01 §5.1; Phase 7 review)
+    public func trashParFilesAfterSuccessfulRestore() {
+        guard docStatus == .restoredSuccessfully || docStatus == .restoredWithRenames else {
+            return
+        }
+        trashParFiles()
+    }
+
+    /// `AutoDeletePnn` (doc-01 §5.1): moves the set's contributing par files to the Trash
+    /// after a successful restore. Trash-only by design — when the Trash is unavailable
+    /// (some network volumes), files are LEFT IN PLACE and logged, never permanently deleted.
+    /// The UI calls this on the green verify/repair end when the preference is on.
+    public func trashParFiles() {
+        guard let parFiles = parSet?.parFiles, !parFiles.isEmpty else { return }
+        // The par files live beside the data files — bracket in the same folder grant the
+        // engine runs use (the open scope may have lapsed by the time the verify ends).
+        var scopeURL: URL?
+        if let bookmark = folderGrantBookmark(), let scope = try? ScopedAccess.resolve(bookmark),
+            scope.didStart
+        {
+            scopeURL = scope.url
+        }
+        defer { scopeURL?.stopAccessingSecurityScopedResource() }
+
+        var trashed = 0
+        var failed = 0
+        for url in parFiles {
+            guard FileManager.default.fileExists(atPath: url.path) else { continue }
+            do {
+                try FileManager.default.trashItem(at: url, resultingItemURL: nil)
+                trashed += 1
+            } catch {
+                failed += 1
+            }
+        }
+        if trashed > 0 {
+            log.append("Moved \(trashed) par file\(trashed == 1 ? "" : "s") to the Trash.")
+        }
+        if failed > 0 {
+            log.append(
+                "\(failed) par file\(failed == 1 ? "" : "s") could not be moved to the Trash and were left in place."
+            )
+        }
     }
 
     /// A restored extraction window: surface what it was showing, but never re-extract
@@ -343,6 +404,10 @@ public final class OperationSession {
                 } else {
                     self.startVerify(using: engine, autoRepair: autoRepair)
                 }
+            } else {
+                // Parse-only end (no engine, parse failure, or PAR1): nothing else will
+                // start itself — the multi-open queue may move on.
+                self.runEnded += 1
             }
         }
     }
@@ -353,10 +418,10 @@ public final class OperationSession {
         let action = pendingGrantAction
         pendingGrantAction = nil
         switch action {
-        case .extract(let extractor, let password, let conflicts, let preservingHistory):
+        case .extract(let extractor, let options, let password, let conflicts, let history):
             startExtractFromAnchor(
-                using: extractor, password: password, conflicts: conflicts,
-                preservingHistory: preservingHistory)
+                using: extractor, options: options, password: password, conflicts: conflicts,
+                preservingHistory: history)
         case .verify(let autoRepair):
             startVerify(using: engine, autoRepair: autoRepair)
         case nil:
@@ -375,6 +440,8 @@ public final class OperationSession {
                 ? "Folder access not granted — extraction needs access to the archive's folder to read all volumes and write the output."
                 : "Folder access not granted — verify would report every data file as missing. Use the Verify button after granting access, or open the enclosing folder."
         )
+        // The declined grant ends this window's pipeline.
+        runEnded += 1
     }
 
     private struct ParseOutcome: Sendable {
@@ -596,6 +663,9 @@ public final class OperationSession {
                 if case .success = result, runKind == .verifyRepair, docStatus.isGreenEndState {
                     postProcessReady += 1
                 }
+                // Settlement signal LAST: by the time the queue's deferred check runs, any
+                // chain or retry the UI fires off this event has already re-marked busy.
+                runEnded += 1
             }
         }
     }
