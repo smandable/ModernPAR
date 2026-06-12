@@ -19,6 +19,7 @@ struct ModernPARApp: App {
     /// evaluates it off the main actor.
     @State private var model = AppModel(
         par2Engine: EmbeddedEngine(),
+        par2Creator: EmbeddedEngine(),
         archiveExtractor: RARExtractor(keepBrokenFiles: {
             UserDefaults.standard.bool(forKey: Settings.keepBrokenKey)
         }),

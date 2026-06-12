@@ -290,6 +290,24 @@ These are the load-bearing calls that the phases below assume. Each resolves a r
 
 **Goal.** Author new recovery sets.
 
+> **Status: PAR2 create DONE (2026-06-11).** The build-a-set window (`CreateSetView`) over the
+> already-tested `par2shim_create` path: add files / drop a folder (one-folder enforced, symlink-
+> resolved, nested-subfolder content surfaced not silently dropped), redundancy % stepper, block
+> size Automatic/Manual-KB, recovery-file scheme (limit-to-largest / uniform), a live source +
+> recovery block-count preview, validation mirroring the originals (redundancy 1–100, block size
+> 1–419430 KB, 32768 source-block ceiling checked against the EFFECTIVE size in every mode), and
+> Create (⇧⌘S). `EmbeddedEngine: Par2Creator` streams the same `EngineEvent`s as verify (a
+> `CreateBridge` parses "Processing: X%" → progress); folder read-write is acquired via the
+> existing grant flow and the output always lands in the SOURCE folder; on success it reveals the
+> set in Finder; a cancelled/failed create cleans up its partial `.par2`/volumes. **Created sets
+> verify clean through both the embedded turbo engine and cross-tool `par2cmdline` 1.1.1** (the
+> headline exit criterion), across automatic/manual block sizes, both schemes, and 1–100%
+> redundancy. The 19-agent adversarial review confirmed 11 findings (1 high: recovery files
+> landing in a granted ANCESTOR folder instead of the source folder; mediums: many-small-file
+> sets passing validation then failing in-engine, a validation/preview contradiction) — all fixed
+> with regression tests. 205 tests green. **PAR1 create is deferred to Phase 8** (it rides on the
+> native Reed-Solomon code written there); the resumable-after-cancel nicety is deferred.
+
 **Tasks.**
 - Build-a-set UI: drag from Finder / Add Files (Cmd-F), **all files must be in one folder** (enforced), Remove, set-size limits (PAR2 ≤ 32768 blocks, PAR1 ≤ 255 files).
 - Create PAR2 (Shift-Cmd-S) → `EmbeddedEngine.run(.create(opts))`. Surface only the user-facing knobs (per doc-02 rec): **redundancy %** (`-r`), **block size KB / Automatic** (`-s`), **limit file size to largest data file** (`-l`) vs **uniform** (`-u`). Keep `-c/-f/-n/-m` internal.

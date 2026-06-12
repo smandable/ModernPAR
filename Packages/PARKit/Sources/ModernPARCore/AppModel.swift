@@ -12,6 +12,9 @@ public final class AppModel {
     public var settings: Settings
     public var recents: RecentsStore
     public var par2Engine: any PAR2Engine
+    /// The PAR2 creator (EmbeddedEngine in the app; nil in previews). Injected behind the
+    /// protocol so Core/UI stay engine-module-free. (ROADMAP Phase 6)
+    public var par2Creator: (any Par2Creator)?
     /// The RAR extractor (RARExtractor from ArchiveKit in the app; nil where extraction is
     /// unavailable, e.g. previews). Injected behind the protocol so Core/UI stay C++-free.
     /// (ARCHITECTURE.md §2; ROADMAP Phase 4)
@@ -41,12 +44,14 @@ public final class AppModel {
 
     public init(
         par2Engine: any PAR2Engine,
+        par2Creator: (any Par2Creator)? = nil,
         archiveExtractor: (any ArchiveExtractor)? = nil,
         zipExtractor: (any ArchiveExtractor)? = nil,
         settings: Settings = Settings(),
         recents: RecentsStore = RecentsStore()
     ) {
         self.par2Engine = par2Engine
+        self.par2Creator = par2Creator
         self.archiveExtractor = archiveExtractor
         self.zipExtractor = zipExtractor
         self.settings = settings

@@ -16,6 +16,15 @@ public struct SetWindow: View {
     public init(route: SessionRoute?) { self.route = route }
 
     public var body: some View {
+        if route?.mode == .createSet {
+            CreateSetView(session: session)
+                .environment(model)
+        } else {
+            verifyExtractBody
+        }
+    }
+
+    private var verifyExtractBody: some View {
         VStack(spacing: 0) {
             if let set = session.parSet {
                 SetHeader(set: set)

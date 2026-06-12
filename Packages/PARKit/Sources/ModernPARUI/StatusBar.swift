@@ -57,6 +57,9 @@ public struct StatusBar: View {
         case .extracting: return "Extracting files…"
         case .extractedSuccessfully: return "Extraction finished successfully."
         case .extractionFailed: return "Extraction failed."
+        case .creating: return "Creating recovery data…"
+        case .createdSuccessfully: return "Recovery set created successfully."
+        case .createFailed: return "Could not create the recovery set."
         }
     }
 }

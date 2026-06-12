@@ -120,6 +120,56 @@ public enum RecoveryMath {
         guard sourceBlocks > 0 else { return 0 }
         return Double(recoveryBlocks) / Double(sourceBlocks) * 100
     }
+
+    // MARK: - Create-side math (ROADMAP Phase 6)
+
+    /// Total source blocks across a file set at a given block size (each file rounds up
+    /// independently; the last block is zero-padded — this is NOT `ceil(total/blockSize)`).
+    public static func sourceBlockCount(fileSizes: [UInt64], blockSize: UInt64) -> Int {
+        guard blockSize > 0 else { return 0 }
+        return fileSizes.reduce(0) { $0 + sourceBlocks(fileSize: $1, sliceSize: blockSize) }
+    }
+
+    /// Recovery blocks for a redundancy percentage (rounded; at least 1 when any redundancy is
+    /// requested over a non-empty set), clamped to PAR2's 65535 ceiling.
+    public static func recoveryBlockCount(sourceBlocks: Int, redundancyPercent: Int) -> Int {
+        guard sourceBlocks > 0, redundancyPercent > 0 else { return 0 }
+        let raw = (Double(sourceBlocks) * Double(redundancyPercent) / 100).rounded()
+        return min(65_535, max(1, Int(raw)))
+    }
+
+    /// An automatic block size (positive multiple of 4) targeting ~2000 source blocks — the
+    /// sweet spot par2 tools aim for: enough granularity to repair, not so many packets that
+    /// overhead dominates. Tiny sets floor at 4.
+    public static func automaticBlockSize(totalBytes: UInt64) -> UInt64 {
+        guard totalBytes > 0 else { return 4 }
+        let target: UInt64 = 2000
+        let raw = max(4, totalBytes / target)
+        return roundUpToMultipleOfFour(raw)
+    }
+
+    /// Raises `preferred` (rounded to a multiple of 4) until the source block count fits
+    /// `maxSourceBlocks` — PAR2 cannot represent more than 32768 source blocks. Doubles the
+    /// candidate each step, which converges in a handful of iterations even for huge sets.
+    public static func blockSizeFitting(
+        fileSizes: [UInt64], preferred: UInt64, maxSourceBlocks: Int
+    ) -> UInt64 {
+        var size = max(4, roundUpToMultipleOfFour(preferred))
+        // Guard against pathological loops: block size can't exceed the largest file.
+        let ceiling = roundUpToMultipleOfFour(max(4, fileSizes.max() ?? 4))
+        while sourceBlockCount(fileSizes: fileSizes, blockSize: size) > maxSourceBlocks
+            && size < ceiling
+        {
+            size = roundUpToMultipleOfFour(size &* 2)
+        }
+        return size
+    }
+
+    private static func roundUpToMultipleOfFour(_ value: UInt64) -> UInt64 {
+        guard value > 0 else { return 4 }
+        let (sum, overflow) = value.addingReportingOverflow(3)
+        return overflow ? (UInt64.max / 4 * 4) : (sum / 4 * 4)
+    }
 }
 
 extension ParSet {

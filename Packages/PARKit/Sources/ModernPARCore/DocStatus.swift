@@ -19,10 +19,15 @@ public enum DocStatus: Sendable, Equatable {
     case extracting
     case extractedSuccessfully  // (green)
     case extractionFailed
+    // Create (ROADMAP Phase 6; the original's create progress states).
+    case creating
+    case createdSuccessfully  // (green)
+    case createFailed
 
     public var isGreenEndState: Bool {
         switch self {
-        case .allFilesOK, .restoredSuccessfully, .restoredWithRenames, .extractedSuccessfully:
+        case .allFilesOK, .restoredSuccessfully, .restoredWithRenames, .extractedSuccessfully,
+            .createdSuccessfully:
             return true
         default:
             return false

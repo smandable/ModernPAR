@@ -49,7 +49,7 @@ public final class OperationSession {
 
     /// Which kind of operation the current/last run was — post-processing only chains off
     /// verify/repair, and the UI's archive affordances key off extraction.
-    private enum RunKind { case verifyRepair, extract }
+    private enum RunKind { case verifyRepair, extract, create }
     private var runKind: RunKind = .verifyRepair
 
     /// Fast id → index map kept in sync with `rows` so batch application stays O(events), not O(n²).
@@ -135,7 +135,9 @@ public final class OperationSession {
         // state must be restored here — otherwise the spinner sticks at busy/checking forever.
         if isBusy {
             setBusy(false)
-            if docStatus == .checking || docStatus == .repairing || docStatus == .extracting {
+            if docStatus == .checking || docStatus == .repairing || docStatus == .extracting
+                || docStatus == .creating
+            {
                 docStatus = .waitingToStart
             }
         }
@@ -168,6 +170,26 @@ public final class OperationSession {
         // window's extraction and must not claim to be extracting while it waits.
         let stream = extractor.extract(
             route, to: destination, password: password, conflicts: conflicts)
+        task = Task { [weak self] in
+            await self?.consume(stream)
+            guard !Task.isCancelled else { return }
+            self?.setBusy(false)
+        }
+    }
+
+    /// Starts a PAR2 create operation (ROADMAP Phase 6). Streams the same `EngineEvent`s as
+    /// verify/repair, so the window renders progress with identical machinery; on success the
+    /// created `.par2` becomes `placedURL` (powering "Show in Finder").
+    public func startCreate(_ request: CreateRequest, using creator: any Par2Creator) {
+        cancel()
+        reset(keepingDocument: true)
+        runKind = .create
+        openedURL = request.parFile
+        anchorURL = request.parFile
+        setBusy(true)
+        // The engine emits .extractionPlaced(parFile) on success, which sets placedURL for
+        // "Show in Finder" — the same machinery extraction uses.
+        let stream = creator.create(request)
         task = Task { [weak self] in
             await self?.consume(stream)
             guard !Task.isCancelled else { return }
@@ -530,7 +552,7 @@ public final class OperationSession {
                         // conflict dialog) — then the running status must be cleared here or
                         // the window shows "Extracting files…" forever.
                         if docStatus == .checking || docStatus == .repairing
-                            || docStatus == .extracting
+                            || docStatus == .extracting || docStatus == .creating
                         {
                             docStatus = .waitingToStart
                         }
@@ -538,13 +560,17 @@ public final class OperationSession {
                         docStatus = .internalError
                         log.append("Operation failed: not implemented yet.")
                     case .launchFailed(let reason):
-                        docStatus = .notValid
+                        // The create engine already published .createFailed as the authoritative
+                        // terminal status; don't override it with the parse-failure status.
+                        if docStatus != .createFailed { docStatus = .notValid }
                         log.append("Could not start the operation: \(reason)")
                     case .engine(let code, let message):
                         if docStatus == .checking || docStatus == .repairing {
                             docStatus = .internalError
                         } else if docStatus == .extracting {
                             docStatus = .extractionFailed
+                        } else if docStatus == .creating || docStatus == .createFailed {
+                            docStatus = .createFailed
                         }
                         log.append("Engine failed (code \(code)): \(message)")
                     case .passwordNeeded:

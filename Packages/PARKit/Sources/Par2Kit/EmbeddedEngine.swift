@@ -18,8 +18,8 @@ public final class EmbeddedEngine: PAR2Engine, Sendable {
     /// restored windows, where auto-repair must not fire without consent) use the route flag.
     private let repairsAutomatically: Bool
     /// Engine thread count; 0 = automatic (turbo's default). Wired to the "limit CPU cores"
-    /// preference in Phase 7.
-    private let threadCount: UInt32
+    /// preference in Phase 7. Read by the create path (`EmbeddedCreate`).
+    let threadCount: UInt32
 
     public init(repairsAutomatically: Bool = true, threadCount: UInt32 = 0) {
         self.repairsAutomatically = repairsAutomatically
