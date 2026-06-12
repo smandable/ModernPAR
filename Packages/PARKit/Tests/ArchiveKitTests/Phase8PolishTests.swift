@@ -168,9 +168,19 @@ struct Phase8PolishTests {
         let resolver = CountingResolver()
         let broker = ConflictBroker(resolver: resolver, token: ExtractCancelToken())
         let url = URL(fileURLWithPath: "/tmp/x")
-        #expect(broker.resolveSync(conflictAt: url) == .overwrite)
-        #expect(broker.resolveSync(conflictAt: url) == .overwrite)
-        #expect(broker.resolveSync(conflictAt: url) == .overwrite)
+        // resolveSync BLOCKS its calling thread (engine-queue contract) — hop to GCD so the
+        // test never parks a cooperative thread (the CI pool-starvation lesson).
+        let answers = await withCheckedContinuation { resume in
+            DispatchQueue.global(qos: .userInitiated).async {
+                resume.resume(
+                    returning: [
+                        broker.resolveSync(conflictAt: url),
+                        broker.resolveSync(conflictAt: url),
+                        broker.resolveSync(conflictAt: url),
+                    ])
+            }
+        }
+        #expect(answers == [.overwrite, .overwrite, .overwrite])
         #expect(resolver.calls.get() == 1, "Overwrite All must suppress every later dialog")
     }
 }

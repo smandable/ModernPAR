@@ -98,25 +98,36 @@ struct FilenameEncodingTests {
             unpVersion: 20, rawNameBytes: raw)
     }
 
+    /// plan() may BLOCK on the encoding-picker broker, whose contract is "engine dispatch
+    /// queue only" — calling it from a Swift Concurrency test task parks a COOPERATIVE
+    /// thread on the broker's semaphore while the picker's detached task waits for one.
+    /// Enough such tests in flight starve the whole pool: every test "starts", none finish
+    /// (reproduced with LIBDISPATCH_COOPERATIVE_POOL_STRICT=1; this is what wedged CI).
+    /// The hop to GCD mirrors exactly where production runs plan().
     private func makePlan(
         entries: [RAREntry],
         preference: FilenameEncodingPreference = .automatic,
         picker: (any FilenameEncodingPicker)? = nil
-    ) -> LegacyFilenameDecoder.Plan {
-        var continuation: AsyncStream<EngineEvent>.Continuation!
-        let stream = AsyncStream<EngineEvent> { continuation = $0 }
-        defer {
-            continuation.finish()
-            _ = stream
+    ) async -> LegacyFilenameDecoder.Plan {
+        await withCheckedContinuation { resume in
+            DispatchQueue.global(qos: .userInitiated).async {
+                var continuation: AsyncStream<EngineEvent>.Continuation!
+                let stream = AsyncStream<EngineEvent> { continuation = $0 }
+                defer {
+                    continuation.finish()
+                    _ = stream
+                }
+                resume.resume(
+                    returning: LegacyFilenameDecoder.plan(
+                        for: entries, preference: preference, picker: picker,
+                        token: ExtractCancelToken(), continuation: continuation))
+            }
         }
-        return LegacyFilenameDecoder.plan(
-            for: entries, preference: preference, picker: picker,
-            token: ExtractCancelToken(), continuation: continuation)
     }
 
-    @Test func planIsEmptyForValidUTF8AndUnicodeFlaggedNames() {
+    @Test func planIsEmptyForValidUTF8AndUnicodeFlaggedNames() async {
         let picker = RecordingEncodingPicker(answer: "IBM866")
-        let plan = makePlan(
+        let plan = await makePlan(
             entries: [
                 entry("plain.txt"),  // RAR5 / unicode-flagged: no raw bytes at all
                 entry("café.txt", raw: Array("café.txt".utf8)),  // raw bytes but valid UTF-8
@@ -126,18 +137,18 @@ struct FilenameEncodingTests {
         #expect(picker.prompts == 0, "an unaffected archive must never prompt")
     }
 
-    @Test func planAppliesAFixedEncodingWithoutPrompting() {
+    @Test func planAppliesAFixedEncodingWithoutPrompting() async {
         let picker = RecordingEncodingPicker(answer: "windows-1251")
-        let plan = makePlan(
+        let plan = await makePlan(
             entries: [entry("", raw: Self.privetCP866), entry("plain.txt")],
             preference: .fixed(ianaName: "IBM866"), picker: picker)
         #expect(plan.relativePaths == [0: "Привет.txt"])
         #expect(picker.prompts == 0)
     }
 
-    @Test func planPromptsOnceAndHonorsTheChoice() {
+    @Test func planPromptsOnceAndHonorsTheChoice() async {
         let picker = RecordingEncodingPicker(answer: "IBM866")
-        let plan = makePlan(
+        let plan = await makePlan(
             entries: [entry("", raw: Self.privetCP866), entry("", raw: Self.pokaCP866)],
             picker: picker)
         #expect(picker.prompts == 1)
@@ -145,21 +156,21 @@ struct FilenameEncodingTests {
         #expect(plan.relativePaths == [0: "Привет.txt", 1: "Пока.txt"])
     }
 
-    @Test func planFallsBackToLossyUTF8WhenThePickerDeclines() {
+    @Test func planFallsBackToLossyUTF8WhenThePickerDeclines() async {
         let picker = RecordingEncodingPicker(answer: nil)
-        let plan = makePlan(entries: [entry("", raw: Self.pokaCP866)], picker: picker)
+        let plan = await makePlan(entries: [entry("", raw: Self.pokaCP866)], picker: picker)
         #expect(picker.prompts == 1)
         #expect(plan.relativePaths == [0: String(repeating: "\u{FFFD}", count: 4) + ".txt"])
     }
 
-    @Test func planWithoutAPickerFallsBackToLossyUTF8() {
-        let plan = makePlan(entries: [entry("", raw: Self.pokaCP866)], picker: nil)
+    @Test func planWithoutAPickerFallsBackToLossyUTF8() async {
+        let plan = await makePlan(entries: [entry("", raw: Self.pokaCP866)], picker: nil)
         #expect(plan.relativePaths == [0: String(repeating: "\u{FFFD}", count: 4) + ".txt"])
     }
 
-    @Test func planUniquesCollisionsAgainstUnaffectedAndDecodedNames() {
+    @Test func planUniquesCollisionsAgainstUnaffectedAndDecodedNames() async {
         // An unaffected entry already owns "Привет.txt"; lossy twins collide with each other.
-        let plan = makePlan(
+        let plan = await makePlan(
             entries: [
                 entry("Привет.txt"),
                 entry("", raw: Self.privetCP866),
@@ -172,11 +183,11 @@ struct FilenameEncodingTests {
         #expect(plan.relativePaths[3] == "Пика.txt")
     }
 
-    @Test func planRefusesHostileDecodedPaths() {
+    @Test func planRefusesHostileDecodedPaths() async {
         // windows-1252 bytes that decode to a traversal — both readings sanitize to nil, so
         // the entry keeps the engine default (no override).
         let hostile: [UInt8] = Array("../evil".utf8) + [0xE9]
-        let plan = makePlan(
+        let plan = await makePlan(
             entries: [entry("", raw: hostile)], preference: .fixed(ianaName: "windows-1252"))
         #expect(plan.relativePaths.isEmpty)
     }
@@ -184,9 +195,9 @@ struct FilenameEncodingTests {
     // The DLL build force-overwrites, so a directory landing on a file-owned path would
     // DELETE the extracted file with both entries still reporting success. (Phase 7 review
     // HIGH)
-    @Test func planNeverLetsADirectoryTakeAFileOwnedPath() {
+    @Test func planNeverLetsADirectoryTakeAFileOwnedPath() async {
         // An unaffected FILE owns "Пика.txt"; the affected directory decodes to that path.
-        let plan = makePlan(
+        let plan = await makePlan(
             entries: [
                 entry("Пика.txt"),
                 entry("", raw: Self.pikaCP866, isDirectory: true),
@@ -195,12 +206,12 @@ struct FilenameEncodingTests {
         #expect(plan.relativePaths[1] == "Пика 2.txt")
     }
 
-    @Test func planRenamedDirectoryCarriesItsNestedEntries() {
+    @Test func planRenamedDirectoryCarriesItsNestedEntries() async {
         // The directory's decoded path collides with an unaffected FILE; its nested child
         // (legacy RAR stores the full dir\child path per entry) must follow the rename.
         let dirCP866: [UInt8] = [0x84, 0x88, 0x90]  // "ДИР"
         let childCP866 = dirCP866 + Array("\\".utf8) + Self.pokaCP866
-        let plan = makePlan(
+        let plan = await makePlan(
             entries: [
                 entry("ДИР"),  // unaffected FILE owning the directory's decoded path
                 entry("", raw: dirCP866, isDirectory: true),
@@ -211,10 +222,10 @@ struct FilenameEncodingTests {
         #expect(plan.relativePaths[2] == "ДИР 2/Пока.txt")
     }
 
-    @Test func planLossyFileAndDirectoryTwinsNeverShareAPath() {
+    @Test func planLossyFileAndDirectoryTwinsNeverShareAPath() async {
         // Under the lossy fallback a file and a directory decode identically — directories
         // plan first, the file is numbered away, and no path is shared.
-        let plan = makePlan(entries: [
+        let plan = await makePlan(entries: [
             entry("", raw: Self.pokaCP866),
             entry("", raw: Self.pikaCP866, isDirectory: true),
         ])
