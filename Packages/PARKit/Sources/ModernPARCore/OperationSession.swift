@@ -71,8 +71,25 @@ public final class OperationSession {
     /// lowercased scalar keys — `localizedStandardCompare` costs seconds at the 32 768-row
     /// PAR2 scale (locale machinery per comparison) and broke the scale budget.
     nonisolated static func displaySorted(_ files: [FileEntry]) -> [FileEntry] {
-        let keyed = files.map { (entry: $0, key: Array($0.name.lowercased().unicodeScalars)) }
+        let keyed = files.map { (entry: $0, key: SortKey($0.name)) }
         return keyed.sorted { numericAwareLess($0.key, $1.key) }.map(\.entry)
+    }
+
+    /// Precomputed per-name sort key. Digit classification happens HERE, once per scalar —
+    /// `UnicodeScalar.properties` is ICU-backed and far too slow for the comparator's hot
+    /// loop at the 32k scale (the ASCII fast path keeps typical rosters ICU-free entirely).
+    nonisolated struct SortKey {
+        let scalars: [UnicodeScalar]
+        let digit: [Bool]
+
+        init(_ name: String) {
+            let lowered = Array(name.lowercased().unicodeScalars)
+            scalars = lowered
+            digit = lowered.map { scalar in
+                if scalar.value < 128 { return scalar.value >= 48 && scalar.value <= 57 }
+                return scalar.properties.numericType == .decimal
+            }
+        }
     }
 
     /// Lexicographic over a TOKEN stream: a digit run is one token ordered by (magnitude,
@@ -80,20 +97,20 @@ public final class OperationSession {
     /// digit-vs-non-digit FIRST (never by raw scalar value) is what makes this a strict
     /// weak ordering — fullwidth digits (U+FF10…) have scalar values above ASCII letters
     /// and the mixed rule produced sort cycles. (Phase 8 review)
-    nonisolated private static func numericAwareLess(
-        _ a: [UnicodeScalar], _ b: [UnicodeScalar]
-    ) -> Bool {
+    nonisolated private static func numericAwareLess(_ ka: SortKey, _ kb: SortKey) -> Bool {
+        let a = ka.scalars
+        let b = kb.scalars
         var i = 0
         var j = 0
         while i < a.count, j < b.count {
-            let aDigit = a[i].properties.numericType == .decimal
-            let bDigit = b[j].properties.numericType == .decimal
+            let aDigit = ka.digit[i]
+            let bDigit = kb.digit[j]
             if aDigit != bDigit { return aDigit }
             if aDigit {
                 var ea = i
                 var eb = j
-                while ea < a.count, a[ea].properties.numericType == .decimal { ea += 1 }
-                while eb < b.count, b[eb].properties.numericType == .decimal { eb += 1 }
+                while ea < a.count, ka.digit[ea] { ea += 1 }
+                while eb < b.count, kb.digit[eb] { eb += 1 }
                 var ia = i
                 var jb = j
                 while ia < ea, a[ia] == "0" { ia += 1 }
