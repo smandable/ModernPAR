@@ -13,10 +13,11 @@ Built with **Swift 6 + SwiftUI** (Xcode 26, macOS 14+).
 > preference surface, the post-process rule editor, and in-app help. Every Mach-O in the bundle
 > is arm64-only (CI-gated, including the embedded Sparkle 2). 342 tests, including byte-for-byte
 > oracle checks against the original tools and license-compliance gates. The signing /
-> notarization / Sparkle / DMG pipeline is in place (`Scripts/release.sh`, tag-gated release
-> workflow) and waits only on the owner-credential checklist — Developer ID cert, notary
-> API key, Sparkle EdDSA key, feed confirmation — for the first notarized cut.
-> See [docs/ROADMAP.md](docs/ROADMAP.md).
+> notarization / Sparkle / DMG pipeline is live: **v0.1.0 is published** as a notarized,
+> stapled DMG (Gatekeeper-accepted offline, app and DMG both stapled) with an EdDSA-signed
+> Sparkle appcast served from GitHub Releases. Tagged releases build, sign, notarize, and
+> publish entirely in CI. See [docs/ROADMAP.md](docs/ROADMAP.md) and the
+> [releases page](https://github.com/smandable/ModernPAR/releases).
 
 ## What it does
 

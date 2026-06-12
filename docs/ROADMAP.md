@@ -477,11 +477,20 @@ These are the load-bearing calls that the phases below assume. Each resolves a r
 > `Scripts/release.sh` run: app notarization Accepted, DMG notarization Accepted, both
 > stapled, `spctl` says "accepted — source=Notarized Developer ID" for both.
 >
-> **Still open before `v0.1.0`:** the five GitHub release secrets (export the Sparkle key
-> with `Scripts/sign-update.sh generate-keys -x <file>`; cert as .p12; ASC API key trio),
-> feed-hosting confirmation (Info.plist points at `releases/latest/download/appcast.xml`;
-> the feed 404s harmlessly until the first release publishes), clean-Mac offline Gatekeeper
-> test of the DMG, Sparkle end-to-end update test (needs a second version to update to).
+> **v0.1.0 SHIPPED (2026-06-12).** All six CI secrets set (validated against Apple before
+> storing); tag pushed; the release workflow ran green end-to-end on the first try: tests →
+> temp-keychain cert import → sign → notarize (app + DMG, both Accepted) → staple both →
+> EdDSA-signed appcast → GitHub Release. The published DMG re-downloaded and re-verified:
+> stapler validate OK and `spctl` "accepted — source=Notarized Developer ID" for the DMG
+> *and* the inner app; the live feed at `releases/latest/download/appcast.xml` serves a
+> signed enclosure (sparkle:version 19 / 0.1.0, min macOS 14.0, arm64).
+>
+> **Remaining for full Phase 9 exit:** Sparkle end-to-end update test — needs a v0.1.1 to
+> update *to*; cut one whenever the next change lands, then run the installed 0.1.0 and
+> accept the update. Optional: a literal clean-Mac offline Gatekeeper check (verified
+> locally on the published artifact already). Dev note: Debug builds carry
+> CURRENT_PROJECT_VERSION=1, so a dev build will see the feed's build 19 as an update —
+> consider gating the updater start behind `#if !DEBUG` if the nag bothers development.
 > Deferred niceties: bundling `par2helper` as a fallback-build variant; legal review before
 > the first public release (top item: GPL app + UnRAR-licensed component coexistence).
 
