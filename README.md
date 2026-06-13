@@ -6,17 +6,18 @@ when Apple retires Rosetta 2).
 
 Built with **Swift 6 + SwiftUI** (Xcode 26, macOS 14+).
 
-> Status: **Phases 0–8 complete — fully native, no Rosetta anywhere; Phase 9 (ship track)
-> scaffolded.** Verify/repair/create for both PAR2 (embedded par2cmdline-turbo) and PAR1
+> Status: **Phases 0–9 complete — fully native, no Rosetta anywhere; v1.0.0 shipped.**
+> Verify/repair/create for both PAR2 (embedded par2cmdline-turbo) and PAR1
 > (pure-Swift GF(2⁸) Reed-Solomon, byte-identical to the original's Intel helper and
 > cross-verified by it), RAR/zip extraction including `.001` splits and SFX, the full six-tab
 > preference surface, the post-process rule editor, and in-app help. Every Mach-O in the bundle
 > is arm64-only (CI-gated, including the embedded Sparkle 2). 342 tests, including byte-for-byte
 > oracle checks against the original tools and license-compliance gates. The signing /
-> notarization / Sparkle / DMG pipeline is live: **v0.1.0 is published** as a notarized,
-> stapled DMG (Gatekeeper-accepted offline, app and DMG both stapled) with an EdDSA-signed
-> Sparkle appcast served from GitHub Releases. Tagged releases build, sign, notarize, and
-> publish entirely in CI. See [docs/ROADMAP.md](docs/ROADMAP.md) and the
+> notarization / Sparkle / DMG pipeline is live: **v1.0.0 is the latest release** — a
+> notarized, stapled DMG (Gatekeeper-accepted offline, app and DMG both stapled) with an
+> EdDSA-signed Sparkle appcast served from GitHub Releases, and in-app auto-updates are
+> verified working end-to-end (each release's "What's New" notes show in the updater).
+> Tagged releases build, sign, notarize, and publish entirely in CI. See [docs/ROADMAP.md](docs/ROADMAP.md) and the
 > [releases page](https://github.com/smandable/ModernPAR/releases).
 
 ## What it does
