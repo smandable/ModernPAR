@@ -4,6 +4,13 @@ All notable changes to ModernPAR are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project follows
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.2] — 2026-06-13
+
+### Changed
+- Software-update prompts now include a "What's New" summary: Sparkle's update dialog shows
+  the release notes for each version, taken from this changelog and embedded in the signed
+  appcast, so you can see what changed before installing.
+
 ## [0.1.1] — 2026-06-13
 
 Cut to exercise the live Sparkle update channel end to end: an installed v0.1.0
@@ -36,5 +43,6 @@ Swift 6 + SwiftUI, no Rosetta required.
   auto-updates; Acknowledgements view carrying the GPL-2.0, UnRAR, and Sparkle
   license texts.
 
+[0.1.2]: https://github.com/smandable/ModernPAR/releases/tag/v0.1.2
 [0.1.1]: https://github.com/smandable/ModernPAR/releases/tag/v0.1.1
 [0.1.0]: https://github.com/smandable/ModernPAR/releases/tag/v0.1.0

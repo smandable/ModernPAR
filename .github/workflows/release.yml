@@ -96,6 +96,15 @@ jobs:
           SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
         run: |
           set -euo pipefail
+          # Release notes → appcast: generate_appcast embeds an HTML file that shares the
+          # DMG's basename (ModernPAR-<version>.html) as the item's CDATA <description>,
+          # which Sparkle renders as the "What's New" notes. Prerelease tags (e.g. v0.1.2-rc1)
+          # reuse their base version's CHANGELOG section.
+          VERSION="${GITHUB_REF_NAME#v}"
+          BASE_VERSION="${VERSION%%-*}"
+          Scripts/release-notes.sh "$BASE_VERSION" CHANGELOG.md > "dist/ModernPAR-${VERSION}.html"
+          echo "=== embedded release notes (base ${BASE_VERSION}) ==="
+          cat "dist/ModernPAR-${VERSION}.html"
           TOOLS=build/SourcePackages/artifacts/sparkle/Sparkle/bin
           printf '%s' "$SPARKLE_PRIVATE_KEY" | "$TOOLS/generate_appcast" \
             --ed-key-file - \
@@ -110,6 +119,13 @@ jobs:
           if ! grep -q 'sparkle:edSignature="' dist/appcast.xml; then
             echo "appcast item is UNSIGNED: SPARKLE_PRIVATE_KEY missing/invalid or does not" \
               "match the SUPublicEDKey baked into the app (see generate_appcast output)." >&2
+            exit 1
+          fi
+          # Release notes must actually embed (generate_appcast silently omits them if the
+          # .html basename does not match the DMG) — fail rather than ship a noteless update.
+          if ! grep -q '<description>' dist/appcast.xml; then
+            echo "appcast item has no <description>: release notes did not embed — check that" \
+              "dist/ModernPAR-${VERSION}.html matches the DMG basename." >&2
             exit 1
           fi
 
