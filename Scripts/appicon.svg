@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024"><g transform="translate(100,100) scale(0.804688)"><defs>
+<linearGradient id="mp_bg" x1="0" y1="0" x2="1" y2="1">
+<stop offset="0" stop-color="#2554d6"/><stop offset="0.55" stop-color="#1e87c9"/><stop offset="1" stop-color="#13c4b0"/>
+</linearGradient>
+<linearGradient id="mp_tile" x1="0" y1="0" x2="0" y2="1">
+<stop offset="0" stop-color="#ffffff"/><stop offset="1" stop-color="#e3ecf7"/>
+</linearGradient>
+<linearGradient id="mp_snap" x1="566" y1="218" x2="798" y2="450" gradientUnits="userSpaceOnUse">
+<stop offset="0" stop-color="#74f7c0"/><stop offset="1" stop-color="#16c98a"/>
+</linearGradient>
+<radialGradient id="mp_glow" cx="0.5" cy="0.5" r="0.5">
+<stop offset="0" stop-color="#9affd6" stop-opacity="0.85"/><stop offset="1" stop-color="#9affd6" stop-opacity="0"/>
+</radialGradient>
+<linearGradient id="mp_sheen" x1="0" y1="0" x2="0" y2="1">
+<stop offset="0" stop-color="#ffffff" stop-opacity="0.28"/><stop offset="0.5" stop-color="#ffffff" stop-opacity="0"/>
+</linearGradient>
+</defs><rect x="0" y="0" width="1024" height="1024" rx="228" fill="url(#mp_bg)"/>
+<rect x="0" y="0" width="1024" height="512" rx="228" fill="url(#mp_sheen)"/>
+<rect x="262" y="262" width="232" height="232" rx="30" fill="url(#mp_tile)"/>
+<rect x="262" y="530" width="232" height="232" rx="30" fill="url(#mp_tile)"/>
+<rect x="530" y="530" width="232" height="232" rx="30" fill="url(#mp_tile)"/>
+<rect x="530" y="262" width="232" height="232" rx="30" fill="#1c4fb0" opacity="0.35"/>
+<rect x="530" y="262" width="232" height="232" rx="30" fill="none" stroke="#bfeede" stroke-width="6" stroke-dasharray="20 22" opacity="0.7"/>
+<circle cx="676" cy="216" r="190" fill="url(#mp_glow)"/><rect x="566" y="218" width="232" height="232" rx="30" fill="url(#mp_snap)"/><rect x="566" y="218" width="232" height="100" rx="30" fill="#ffffff" opacity="0.22"/></g></svg>

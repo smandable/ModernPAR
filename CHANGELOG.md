@@ -4,6 +4,18 @@ All notable changes to ModernPAR are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project follows
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.0] — 2026-06-13
+
+ModernPAR 1.0 — the first stable release.
+
+### Added
+- The ModernPAR app icon, so the app finally has its own identity in the Dock, Finder,
+  and the About window.
+
+Everything from the 0.1.x line is here and stable: PAR2 and native PAR1 verify, repair,
+and create; RAR and ZIP extraction; the automatic verify-repair-extract loop; and signed,
+notarized Sparkle auto-updates.
+
 ## [0.1.2] — 2026-06-13
 
 ### Changed
@@ -43,6 +55,7 @@ Swift 6 + SwiftUI, no Rosetta required.
   auto-updates; Acknowledgements view carrying the GPL-2.0, UnRAR, and Sparkle
   license texts.
 
+[1.0.0]: https://github.com/smandable/ModernPAR/releases/tag/v1.0.0
 [0.1.2]: https://github.com/smandable/ModernPAR/releases/tag/v0.1.2
 [0.1.1]: https://github.com/smandable/ModernPAR/releases/tag/v0.1.1
 [0.1.0]: https://github.com/smandable/ModernPAR/releases/tag/v0.1.0
