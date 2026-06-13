@@ -485,10 +485,16 @@ These are the load-bearing calls that the phases below assume. Each resolves a r
 > *and* the inner app; the live feed at `releases/latest/download/appcast.xml` serves a
 > signed enclosure (sparkle:version 19 / 0.1.0, min macOS 14.0, arm64).
 >
-> **Remaining for full Phase 9 exit:** Sparkle end-to-end update test — needs a v0.1.1 to
-> update *to*; cut one whenever the next change lands, then run the installed 0.1.0 and
-> accept the update. Optional: a literal clean-Mac offline Gatekeeper check (verified
-> locally on the published artifact already). Dev note: Debug builds carry
+> **PHASE 9 COMPLETE (2026-06-13).** v0.1.1 cut (build 21; a CHANGELOG-only smoke change)
+> and the Sparkle end-to-end update test PASSED: the shipped, notarized v0.1.0 (build 19),
+> installed from the GitHub Release, auto-detected 0.1.1 on the live feed
+> (`releases/latest/download/appcast.xml`), downloaded the EdDSA-signed DMG, verified the
+> signature, and installed + relaunched in place — `/Applications/ModernPAR.app` flipped
+> 0.1.0/19 → 0.1.1/21, still `stapler validate` OK and spctl "Notarized Developer ID". The
+> final exit criterion (Sparkle update applies end-to-end on a sandboxed build) is met, so
+> all Phase 9 exit criteria now pass. Optional leftover: a literal clean-Mac offline
+> Gatekeeper check (already verified locally on the published artifact). Dev note: Debug
+> builds carry
 > CURRENT_PROJECT_VERSION=1, so a dev build will see the feed's build 19 as an update —
 > consider gating the updater start behind `#if !DEBUG` if the nag bothers development.
 > Deferred niceties: bundling `par2helper` as a fallback-build variant; legal review before
