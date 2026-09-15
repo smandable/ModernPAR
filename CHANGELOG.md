@@ -4,7 +4,7 @@ All notable changes to ModernPAR are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project follows
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [1.0.1] — Unreleased
+## [1.0.1] — 2026-09-15
 
 Fixes for the sandbox folder-access flow, prompted by user reports on r/macapps: windows
 stuck on "Waiting to start" with no folder picker, and a lock icon read as "unrar disabled".

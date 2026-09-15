@@ -565,7 +565,7 @@ Four layers, all runnable in CI on `macos-26` (`swift test` headless + `xcodebui
 
 ## Post-1.0 maintenance
 
-> **v1.0.1 (2026-09-15) — sandbox folder-grant UX.** Prompted by an r/macapps thread
+> **v1.0.1 (shipped 2026-09-15) — sandbox folder-grant UX.** Prompted by an r/macapps thread
 > (July 2026) where two users sat on "Waiting to start" with no folder picker and read the
 > pinned rule's lock as "unrar disabled". Fixes: the grant panel is shown even under
 > unattended operation (it is a one-time capability prompt, not a per-run dialog); a
