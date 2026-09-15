@@ -383,6 +383,105 @@ struct EmbeddedEngineTests {
         #expect(try Data(contentsOf: big) == original)
     }
 
+    // MARK: - One engine operation per process
+
+    @Test func shimNeverRunsTwoEngineOperationsAtOnce() throws {
+        // Regression: turbo's process-global tables initialize lazily behind unsynchronized
+        // first-use guards, and two operations racing through them corrupted the GF(2^16)
+        // reciprocal table (in this unoptimized test build, for the life of the process —
+        // every later repair failed its verification). The first operation parks inside the
+        // engine (its log callback blocks); a second one must not start until it returns.
+        // Budgets are generous: both calls may first queue behind other tests' engine work.
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("one-at-a-time-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        var parFiles: [URL] = []
+        var dataFiles: [URL] = []
+        for name in ["first", "second"] {
+            let dir = root.appendingPathComponent(name)
+            try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+            let data = dir.appendingPathComponent("\(name).bin")
+            try Data((0..<65536).map { UInt8(truncatingIfNeeded: $0 &* 31) }).write(to: data)
+            dataFiles.append(data)
+            parFiles.append(dir.appendingPathComponent("\(name).par2"))
+        }
+
+        final class Gate: @unchecked Sendable {
+            let firstInside = DispatchSemaphore(value: 0)
+            let releaseFirst = DispatchSemaphore(value: 0)
+            let secondCalling = DispatchSemaphore(value: 0)
+            private let lock = NSLock()
+            private var firstParked = false
+            private var secondStartedFlag = false
+            private var results: [Int: Par2ShimResult] = [:]
+            func firstEmitted() {
+                let park = lock.withLock {
+                    defer { firstParked = true }
+                    return !firstParked
+                }
+                if park {
+                    firstInside.signal()
+                    releaseFirst.wait()
+                }
+            }
+            func secondEmitted() { lock.withLock { secondStartedFlag = true } }
+            var secondStarted: Bool { lock.withLock { secondStartedFlag } }
+            func record(_ index: Int, _ result: Par2ShimResult) {
+                lock.withLock { results[index] = result }
+            }
+            func result(_ index: Int) -> Par2ShimResult? { lock.withLock { results[index] } }
+        }
+        let gate = Gate()
+        let callbacks: [Par2ShimLogLine] = [
+            { context, _, _ in
+                guard let context else { return }
+                Unmanaged<Gate>.fromOpaque(context).takeUnretainedValue().firstEmitted()
+            },
+            { context, _, _ in
+                guard let context else { return }
+                Unmanaged<Gate>.fromOpaque(context).takeUnretainedValue().secondEmitted()
+            },
+        ]
+        let finished = DispatchGroup()
+        func create(_ index: Int) {
+            finished.enter()
+            let parPath = parFiles[index].path
+            let dataPath = dataFiles[index].path
+            let callback = callbacks[index]
+            Thread.detachNewThread {
+                let context = Unmanaged.passUnretained(gate).toOpaque()
+                let data = strdup(dataPath)
+                defer { free(data) }
+                var argv: [UnsafePointer<CChar>?] = [UnsafePointer(data)]
+                if index == 1 { gate.secondCalling.signal() }
+                let result = argv.withUnsafeMutableBufferPointer { buffer in
+                    par2shim_create(
+                        parPath, nil, buffer.baseAddress, 1, 4096, 4, PAR2SHIM_SCHEME_VARIABLE,
+                        0, 0, 0, callback, context, nil, nil)
+                }
+                gate.record(index, result)
+                finished.leave()
+            }
+        }
+
+        create(0)
+        guard gate.firstInside.wait(timeout: .now() + 300) == .success else {
+            Issue.record("the first operation never produced engine output")
+            gate.releaseFirst.signal()
+            return
+        }
+        create(1)
+        // Only once the second call is really being made does silence prove it is waiting.
+        #expect(gate.secondCalling.wait(timeout: .now() + 60) == .success)
+        Thread.sleep(forTimeInterval: 0.5)
+        #expect(!gate.secondStarted, "a second engine operation ran alongside the first")
+        gate.releaseFirst.signal()
+        #expect(finished.wait(timeout: .now() + 300) == .success)
+        #expect(gate.secondStarted)
+        #expect(gate.result(0) == PAR2SHIM_SUCCESS)
+        #expect(gate.result(1) == PAR2SHIM_SUCCESS)
+    }
+
     @Test func streamTerminationTripsTheCancelToken() async throws {
         let dir = try stageFixture()
         defer { try? FileManager.default.removeItem(at: dir) }

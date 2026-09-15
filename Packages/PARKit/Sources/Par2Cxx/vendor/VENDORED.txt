@@ -49,3 +49,16 @@ marked with "MODERNPAR PATCH" in the source):
    patch turns the tests back into a SIGSEGV).
 
 Success-path behavior is unchanged by all patches.
+
+SHIM-SIDE MITIGATION (not a patch to this tree; re-check it on every bump):
+
+- Par2Shim.cpp runs ONE engine operation per process at a time (a process-wide mutex around
+  every repair/create). Upstream's first-use initializers — parpar/gf16/gfmat_coeff.c
+  gfmat_init(), parpar/hasher/hasher.cpp setup_hasher(), parpar/gf16/gfmat_inv.cpp
+  pmulInit/setup_pmul() — publish their "done" guard before the work is finished, and the
+  Par2Repairer/Par2Creator filethreads statics are rewritten on every run. Operations racing
+  through first use see NULL or half-built GF(2^16) tables (a crash, or wrong recovery data
+  from a create); in unoptimized builds gfmat_init()'s in-place reciprocal pass leaves the
+  table corrupt for the life of the process, so every later repair failed verification
+  (reproduced with concurrent creates). Only relax the lock if upstream makes all of these
+  thread-safe.

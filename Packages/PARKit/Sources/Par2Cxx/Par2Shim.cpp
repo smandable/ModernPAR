@@ -6,6 +6,7 @@
 #include <sys/sysctl.h>
 
 #include <exception>
+#include <mutex>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -19,6 +20,21 @@ namespace {
  * engine on cancellation. The vendored foreach_parallel.h patch guarantees worker-thread
  * throws are rethrown on the joining thread instead of hitting std::terminate. */
 struct CancelledException {};
+
+/* ONE engine operation per process at a time. turbo is built as a one-operation CLI: its
+ * process-global tables and method pointers initialize lazily behind unsynchronized
+ * first-use guards (setup_hasher, gfmat_init, gfmat_inv's pmulInit/setup_pmul) that publish
+ * "done" before the work is finished, and it rewrites statics such as the repairer's and
+ * creator's filethreads on every run. Two operations racing through first use see NULL or
+ * half-built GF(2^16) tables — a crash, or a create writing wrong recovery data — and in
+ * unoptimized builds gfmat_init's in-place reciprocal pass leaves the table corrupt for the
+ * life of the process, so every later repair fails verification (reproduced in 10 of 12
+ * fresh test processes with concurrent creates). The Swift engines already serialize on
+ * EngineRunSupport.serialQueue, so in the app this is uncontended; it makes the C ABI itself
+ * safe for direct callers (Par2Create, tests). Taken before any engine object is constructed
+ * (the constructors run the lazy initializers) and held until the run has fully unwound,
+ * cancellation included. */
+std::mutex engineMutex;
 
 /* Mirrors the CLI's default (commandline.cpp): half of physical RAM, computed in whole
  * megabytes. GetTotalPhysicalMemory lives in the excluded CLI translation unit, so the
@@ -99,6 +115,7 @@ Par2ShimResult runEngine(
     Par2ShimShouldCancel should_cancel, void *cancel_context,
     const EngineCall &call) {
     try {
+        std::lock_guard<std::mutex> oneOperationAtATime(engineMutex);
         LineForwardingBuf outBuf(log_line, log_context, 0, should_cancel, cancel_context);
         LineForwardingBuf errBuf(log_line, log_context, 1, should_cancel, cancel_context);
         std::ostream sout(&outBuf);
