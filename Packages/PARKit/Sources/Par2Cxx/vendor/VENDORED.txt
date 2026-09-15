@@ -24,4 +24,28 @@ marked with "MODERNPAR PATCH" in the source):
    delete[] transferbuffer (workers read/write that buffer; with patch 3's joining deinit
    this ordering makes exception unwinds safe).
 
+5. src/par2repairersourcefile.{h,cpp} + src/par2repairer.cpp — non-recovery source files
+   (a FileDesc listed in the Main packet's NON-recovery set) are never passed to SetBlocks(),
+   so their sourceblocks/targetblocks iterators stay default-constructed. Upstream dereferenced
+   those unassigned iterators, SIGSEGV'ing on ANY non-recovery file with size > 0 — a crafted
+   or third-party .par2 crashes the whole app because ModernPAR runs the verifier in-process.
+   The fix adds a per-file flag Par2RepairerSourceFile::BlocksAllocated() (set true only in
+   SetBlocks()) and gates every per-file block-iterator dereference on it, plus restricts the
+   recovery accounting / repair machinery to RECOVERABLE files (index < RecoverableFileCount()):
+     - VerifyDataFile whole-file "perfect match" loop: gate on the PER-FILE flag, not the
+       repairer-global `blocksallocated` (which is true whenever ANY recoverable file was
+       allocated). This is the originally-reported crash.
+     - PrepareVerificationHashTable: only Load() a verification packet when the file's blocks
+       were allocated, so a crafted IFSC packet attached to a non-recovery file can't make
+       VerificationHashTable::Load walk its unassigned iterator.
+     - UpdateVerificationResults: skip non-recovery files entirely (they have no recovery
+       blocks and can't be repaired). This ALSO fixes a logic bug where an intact non-recovery
+       file was counted into completefilecount, reaching RecoverableFileCount() and making
+       Process() return eSuccess WITHOUT repairing a damaged recoverable file.
+     - RenameTargetFiles / CreateTargetFiles: skip non-recovery files so the repair path never
+       renames their on-disk copy aside or recreates a missing one (which walked TargetBlocks()).
+   Regression test: Tests/ModernPARCoreTests/NonRecoveryCrashRegressionTests.swift (drives the
+   in-process EmbeddedEngine against the crafted Fixtures/par2-nonrecovery/ set — reverting this
+   patch turns the tests back into a SIGSEGV).
+
 Success-path behavior is unchanged by all patches.

@@ -39,6 +39,7 @@ Par2RepairerSourceFile::Par2RepairerSourceFile(DescriptionPacket *_descriptionpa
 
   blockcount = 0;
   firstblocknumber = 0;
+  blocksallocated = false;  // MODERNPAR PATCH: set true only when SetBlocks() runs.
 
 //  verificationhashtable = 0;
 
@@ -123,6 +124,7 @@ void Par2RepairerSourceFile::SetBlocks(u32 _blocknumber,
   blockcount = _blockcount;
   sourceblocks = _sourceblocks;
   targetblocks = _targetblocks;
+  blocksallocated = true;  // MODERNPAR PATCH: iterators are now valid to dereference.
 
   if (blockcount > 0)
   {

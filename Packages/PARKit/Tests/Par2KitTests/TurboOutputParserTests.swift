@@ -219,4 +219,56 @@ struct TurboOutputParserTests {
         #expect(EngineRunSupport.engineDisplayName(for: "ctl\u{01}x.bin") == "ctl%01x.bin")
         #expect(EngineRunSupport.engineDisplayName(for: "naïve-ü.bin") == "naïve-ü.bin")
     }
+
+    // MARK: - Non-recovery ("other") files (Main packet non-recovery set)
+
+    private let idOther = UUID()
+
+    /// Parser configured with `a.bin`/`b.bin` recoverable and `readme.txt` non-recovery.
+    private func eventsWithOther(_ lines: [(String, Bool)], repairs: Bool = true) -> [EngineEvent] {
+        var parser = TurboOutputParser(
+            fileIDsByName: ["a.bin": idA, "b.bin": idB, "readme.txt": idOther],
+            nonRecoveryIDs: [idOther],
+            repairsAutomatically: repairs)
+        return lines.flatMap { parser.consume($0.0, isError: $0.1) }
+    }
+
+    @Test func presentNonRecoveryFileStaysNotInSetAndKeepsAllFilesOK() {
+        // The recoverable files verify; the non-recovery file whole-file matches (present).
+        let all = eventsWithOther([
+            ("Target: \"a.bin\" - found.", false),
+            ("Target: \"b.bin\" - found.", false),
+            ("File: \"readme.txt\" - no data found.", false),
+            ("/tmp/set/readme.txt is a perfect match for readme.txt", false),
+            ("All files are correct, repair is not required.", false),
+        ])
+        #expect(docStatuses(in: all) == [.allFilesOK])
+        #expect(statuses(in: all)[idOther]?.last == .notInSet)
+    }
+
+    @Test func missingNonRecoveryFileReportsOnlyNonRecoverableMissing() {
+        let all = eventsWithOther([
+            ("Target: \"a.bin\" - found.", false),
+            ("Target: \"b.bin\" - found.", false),
+            ("Target: \"readme.txt\" - missing.", false),
+            ("All files are correct, repair is not required.", false),
+        ])
+        #expect(docStatuses(in: all) == [.onlyNonRecoverableMissing])
+        // The row stays "not in set" — never a dangling "checking"/"missing".
+        #expect(statuses(in: all)[idOther] == [.notInSet])
+    }
+
+    @Test func corruptNonRecoveryFileReportsOnlyNonRecoverableMissing() {
+        // Present but no whole-file match (no "perfect match" line for it).
+        let all = eventsWithOther([
+            ("Target: \"a.bin\" - found.", false),
+            ("Target: \"b.bin\" - found.", false),
+            ("File: \"readme.txt\" - no data found.", false),
+            ("All files are correct, repair is not required.", false),
+        ])
+        #expect(docStatuses(in: all) == [.onlyNonRecoverableMissing])
+        // No recoverable row is dragged into a damaged/missing state by the "other" file.
+        #expect(statuses(in: all)[idA]?.last == .ok)
+        #expect(statuses(in: all)[idB]?.last == .ok)
+    }
 }

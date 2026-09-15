@@ -78,6 +78,12 @@ public:
   // Get the number of blocks that the file uses
   u32 BlockCount(void) const {return blockcount;}
 
+  // MODERNPAR PATCH (see VENDORED.txt): whether SetBlocks() has assigned this file's
+  // source/target DataBlock iterators. Only recoverable files get blocks allocated
+  // (AllocateSourceBlocks skips non-recovery files), so the sourceblocks/targetblocks
+  // iterators of a non-recovery file are default-constructed and MUST NOT be dereferenced.
+  bool BlocksAllocated(void) const {return blocksallocated;}
+
   // Get the relative block number of the first block in the file
   u32 FirstBlockNumber(void) const {return firstblocknumber;}
 
@@ -97,6 +103,11 @@ protected:
 
   u32                          blockcount;          // The number of DataBlocks in the file
   u32                          firstblocknumber;    // The block number of the first DataBlock
+
+  // MODERNPAR PATCH (see VENDORED.txt): false until SetBlocks() runs. Guards every dereference
+  // of sourceblocks/targetblocks so non-recovery files (which are never allocated blocks) can't
+  // dereference an unassigned iterator.
+  bool                         blocksallocated;
 
   std::vector<DataBlock>::iterator  sourceblocks;        // The first source DataBlock
   std::vector<DataBlock>::iterator  targetblocks;        // The first target DataBlock

@@ -4,6 +4,21 @@ All notable changes to ModernPAR are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project follows
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+- Fixed a crash (and a related silent-non-repair) when verifying or repairing a PAR2 set that
+  lists a file as a *non-recovery* member — an "other file" recorded in the set but not
+  protected by it. A crafted or third-party `.par2` could make the in-process engine crash the
+  whole app on any such file with content, and a set whose only intact recoverable member was
+  reported alongside an intact non-recovery file could be declared repaired without actually
+  repairing a damaged file. Non-recovery files are now handled correctly: shown as "not in
+  set", never counted toward the recovery verdict, and never touched by a repair.
+- When the recovery set is intact but a non-recovery ("other") file listed in the set is
+  missing or unreadable, the status now reads "Only non-recoverable files are missing" instead
+  of overstating "All files are correct", and the file's row stays "not in set" rather than
+  showing a spinner that never resolves.
+
 ## [1.0.1] — 2026-09-15
 
 Fixes for the sandbox folder-access flow, prompted by user reports on r/macapps: windows

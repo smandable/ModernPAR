@@ -14,6 +14,14 @@ public struct TurboOutputParser {
     /// par2→local translation) to the native parser's row ids. Names the map doesn't know
     /// are reported with log lines only.
     private let fileIDsByName: [String: UUID]
+    /// Row ids of NON-recovery ("other") files — listed in the Main packet but not protected by
+    /// the recovery set. They can't be repaired and aren't part of the recovery verdict, so they
+    /// stay "not in set" whatever the engine says about them; if one is absent or unreadable the
+    /// terminal verdict is `.onlyNonRecoverableMissing`, not `.allFilesOK`.
+    private let nonRecoveryIDs: Set<UUID>
+    /// Non-recovery files the engine confirmed present-and-matching (a whole-file "perfect
+    /// match"). Any non-recovery row NOT in here by verdict time is missing or unreadable.
+    private var nonRecoveryPresent: Set<UUID> = []
     /// Whether this run repairs after verify — "Repair is required." means "now repairing"
     /// only then; in verify-only runs the engine prints it but stops after the verdict.
     private let repairsAutomatically: Bool
@@ -33,8 +41,11 @@ public struct TurboOutputParser {
     public private(set) var renamedCount = 0
     private var renamedTargets: Set<String> = []
 
-    public init(fileIDsByName: [String: UUID], repairsAutomatically: Bool) {
+    public init(
+        fileIDsByName: [String: UUID], nonRecoveryIDs: Set<UUID> = [], repairsAutomatically: Bool
+    ) {
         self.fileIDsByName = fileIDsByName
+        self.nonRecoveryIDs = nonRecoveryIDs
         self.repairsAutomatically = repairsAutomatically
     }
 
@@ -72,6 +83,29 @@ public struct TurboOutputParser {
             return events
         }
 
+        // A non-recovery ("other") file is never part of the recovery verdict and can't be
+        // repaired, so whatever disposition the engine prints for it, its row stays "not in
+        // set" (never a dangling "checking"/"missing"). A "found" line confirms it is present.
+        if let (name, disposition) = Self.targetLine(line),
+            let id = fileIDsByName[name], nonRecoveryIDs.contains(id)
+        {
+            if disposition == .found { nonRecoveryPresent.insert(id) }
+            events.append(.fileStatusChanged(id: id, status: .notInSet))
+            return events
+        }
+
+        // Whole-file "perfect match" line (unquoted: `<path> is a perfect match for <name>`) —
+        // the engine's confirmation for a file checked only as a whole (no block checksums).
+        // We use it to record that a NON-recovery file is present and matches; recoverable
+        // files are settled by their own Target/verdict lines.
+        if let name = Self.perfectMatchName(line),
+            let id = fileIDsByName[name], nonRecoveryIDs.contains(id)
+        {
+            nonRecoveryPresent.insert(id)
+            events.append(.fileStatusChanged(id: id, status: .notInSet))
+            return events
+        }
+
         if let (name, disposition) = Self.targetLine(line) {
             switch disposition {
             case .found:
@@ -105,7 +139,15 @@ public struct TurboOutputParser {
         }
 
         if line.hasPrefix("All files are correct") {
-            events.append(.docStatusChanged(.allFilesOK))
+            // The recovery set is intact. If a NON-recovery ("other") file is absent or
+            // unreadable, say so instead of overstating "all files are correct" — the original's
+            // DocStatus13. (Renames can't reach this line: the engine prints "Repair is
+            // required." whenever any recoverable file is renamed/damaged/missing.)
+            if nonRecoveryIDs.subtracting(nonRecoveryPresent).isEmpty {
+                events.append(.docStatusChanged(.allFilesOK))
+            } else {
+                events.append(.docStatusChanged(.onlyNonRecoverableMissing))
+            }
         } else if line.hasPrefix("Repair is possible.") {
             awaitingRepair = pendingDamaged.union(pendingMissing)
             recoverableCount = awaitingRepair.count
@@ -194,6 +236,20 @@ public struct TurboOutputParser {
             searchRange = nameStart..<delimiter.lowerBound
         }
         return nil
+    }
+
+    /// `<abs-path> is a perfect match for <raw-name>` — the engine's whole-file match line
+    /// (par2repairer.cpp; unquoted, no trailing period). Returns the trailing description name.
+    /// Distinct from the quoted rename line `… - is a match for "Y".` (no "perfect", and that
+    /// one is handled by `matchLine`). The name is the raw (untranslated) description name,
+    /// which equals the roster key for ASCII filenames; a non-matching exotic name simply
+    /// isn't recorded as present (a conservative, never-wrong fallback).
+    private static func perfectMatchName(_ line: String) -> String? {
+        guard let r = line.range(of: " is a perfect match for ", options: .backwards) else {
+            return nil
+        }
+        let name = line[r.upperBound...]
+        return name.isEmpty ? nil : String(name)
     }
 
     /// `Target: "name" - found.` / `- missing.` / `- damaged...` (par2repairer.cpp).

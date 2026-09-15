@@ -36,20 +36,33 @@ enum EngineRunSupport {
         return Scopes(anchor: anchor, stops: stops)
     }
 
+    /// What `paintRoster` hands the parser: the engine-printed-name → row-id map, plus the row
+    /// ids of the NON-recovery ("other") files — files listed in the Main packet but not part
+    /// of the recovery set. The parser needs those to keep such rows "not in set" (never a
+    /// dangling "checking"/"missing") and to report `.onlyNonRecoverableMissing` rather than
+    /// `.allFilesOK` when one is absent or unreadable.
+    struct Roster {
+        let names: [String: UUID]
+        let nonRecoveryIDs: Set<UUID>
+        static let empty = Roster(names: [:], nonRecoveryIDs: [])
+    }
+
     /// The native parser is the model; the engine is the actuator. Paints the roster so the UI
-    /// has rows before the first engine line, and returns the engine-printed-name → row-id map.
+    /// has rows before the first engine line, and returns the name map + non-recovery row ids.
     /// (ARCHITECTURE.md §1.3)
     static func paintRoster(
         anchor: URL, continuation: AsyncStream<EngineEvent>.Continuation
-    ) -> [String: UUID] {
+    ) -> Roster {
         guard let set = try? Par2Parser.loadSet(anchor: anchor) else {
             continuation.yield(.scanningStarted(totalFiles: 0))
-            return [:]
+            return .empty
         }
         let parSet = ParSet(par2: set)
         continuation.yield(.scanningStarted(totalFiles: parSet.files.count))
         continuation.yield(.filesDiscovered(parSet.files))
-        return rosterNames(for: set)
+        return Roster(
+            names: rosterNames(for: set),
+            nonRecoveryIDs: Set(set.nonRecoveryFileIDs.map(\.uuid)))
     }
 
     /// Sandbox heads-up: with only a single-file grant the engine cannot read the sibling data

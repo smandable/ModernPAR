@@ -67,13 +67,15 @@ public final class EmbeddedEngine: PAR2Engine, Sendable {
             return
         }
 
-        let fileIDsByName = EngineRunSupport.paintRoster(anchor: anchor, continuation: continuation)
+        let roster = EngineRunSupport.paintRoster(anchor: anchor, continuation: continuation)
         continuation.yield(.docStatusChanged(.checking))
         EngineRunSupport.warnIfFolderUnreadable(
             route: route, anchor: anchor, continuation: continuation)
 
         let bridge = LineBridge(
-            parser: TurboOutputParser(fileIDsByName: fileIDsByName, repairsAutomatically: repairs),
+            parser: TurboOutputParser(
+                fileIDsByName: roster.names, nonRecoveryIDs: roster.nonRecoveryIDs,
+                repairsAutomatically: repairs),
             continuation: continuation)
         let result = Self.shimRepair(
             anchor: anchor, repair: repairs, threads: threads, token: token, bridge: bridge)

@@ -1145,8 +1145,12 @@ bool Par2Repairer::PrepareVerificationHashTable(void)
 
     if (sourcefile)
     {
-      // Do we have a verification packet
-      if (0 != sourcefile->GetVerificationPacket())
+      // MODERNPAR PATCH (see VENDORED.txt): only block-verify files whose source blocks were
+      // actually allocated. A non-recovery file is never allocated blocks, so a crafted set
+      // that attaches an IFSC (verification) packet to a non-recovery file would make Load()
+      // dereference its unassigned SourceBlocks() iterator (SIGSEGV). Such files fall through
+      // to the whole-file check like any other unverifiable file.
+      if (0 != sourcefile->GetVerificationPacket() && sourcefile->BlocksAllocated())
       {
         // Yes. Load the verification entries into the hash table
         verificationhashtable.Load(sourcefile, blocksize);
@@ -1543,7 +1547,13 @@ bool Par2Repairer::VerifyDataFile(DiskFile *diskfile, Par2RepairerSourceFile *so
         // Record that we have a perfect match for this source file
         sourcefile->SetCompleteFile(diskfile);
 
-        if (blocksallocated)
+        // MODERNPAR PATCH (see VENDORED.txt): gate on the PER-FILE flag, not the global
+        // `blocksallocated`. A non-recovery file (FileDesc but not in the recovery set) is
+        // never passed to SetBlocks(), so its SourceBlocks() iterator is unassigned; the
+        // global flag is true whenever ANY recoverable file was allocated, so upstream
+        // dereferenced that unassigned iterator here and SIGSEGV'd on any non-recovery file
+        // with size > 0 that whole-file-matched.
+        if (sourcefile->BlocksAllocated())
         {
           // Allocate all of the DataBlocks for the source file to the DiskFile
 
@@ -2071,6 +2081,21 @@ void Par2Repairer::UpdateVerificationResults(void)
   {
     Par2RepairerSourceFile *sourcefile = *sf;
 
+    // MODERNPAR PATCH (see VENDORED.txt): the recovery accounting covers RECOVERABLE files
+    // only. Non-recovery files ("other files": a FileDesc listed in the Main packet's
+    // non-recovery set) have no recovery blocks and cannot be repaired, and they are never
+    // passed to SetBlocks() so their SourceBlocks() iterator is unassigned. Upstream counted
+    // an intact one into completefilecount — which then reached RecoverableFileCount() and made
+    // Process() skip a needed repair (returning eSuccess with a damaged recoverable file) — and
+    // walked the unassigned iterator for a damaged/missing one (SIGSEGV). Both are fixed by
+    // skipping non-recoverable indices here (they are tallied separately as "other files").
+    if (filenumber >= mainpacket->RecoverableFileCount())
+    {
+      ++filenumber;
+      ++sf;
+      continue;
+    }
+
     if (sourcefile)
     {
       // Was a perfect match for the file found
@@ -2090,14 +2115,19 @@ void Par2Repairer::UpdateVerificationResults(void)
       }
       else
       {
-        // Count the number of blocks that have been found
-        std::vector<DataBlock>::iterator sb = sourcefile->SourceBlocks();
-        for (u32 blocknumber=0; blocknumber<sourcefile->BlockCount(); ++blocknumber, ++sb)
+        // Count the number of blocks that have been found. BlocksAllocated() is always true for
+        // a recoverable file here (unless every recoverable file is empty, in which case
+        // BlockCount() is 0 and the loop is a no-op); the guard keeps the invariant local.
+        if (sourcefile->BlocksAllocated())
         {
-          DataBlock &datablock = *sb;
+          std::vector<DataBlock>::iterator sb = sourcefile->SourceBlocks();
+          for (u32 blocknumber=0; blocknumber<sourcefile->BlockCount(); ++blocknumber, ++sb)
+          {
+            DataBlock &datablock = *sb;
 
-          if (datablock.IsSet())
-            availableblockcount++;
+            if (datablock.IsSet())
+              availableblockcount++;
+          }
         }
 
         // Does the target file exist
@@ -2205,6 +2235,16 @@ bool Par2Repairer::RenameTargetFiles(void)
   {
     Par2RepairerSourceFile *sourcefile = *sf;
 
+    // MODERNPAR PATCH (see VENDORED.txt): repair manages RECOVERABLE files only. A non-recovery
+    // file is never a repair target, so skip it — the repair path must not rename its on-disk
+    // copy aside, and (in CreateTargetFiles) must not walk its unassigned TargetBlocks().
+    if (filenumber >= mainpacket->RecoverableFileCount())
+    {
+      ++sf;
+      ++filenumber;
+      continue;
+    }
+
     // If the target file exists but is not a complete version of the file
     if (sourcefile->GetTargetExists() &&
         sourcefile->GetTargetFile() != sourcefile->GetCompleteFile())
@@ -2238,6 +2278,15 @@ bool Par2Repairer::RenameTargetFiles(void)
   while (sf != sourcefiles.end() && filenumber < mainpacket->TotalFileCount())
   {
     Par2RepairerSourceFile *sourcefile = *sf;
+
+    // MODERNPAR PATCH (see VENDORED.txt): recoverable files only (see the first loop). Skipping
+    // here also keeps the completefilecount++ below from counting a non-recovery file.
+    if (filenumber >= mainpacket->RecoverableFileCount())
+    {
+      ++sf;
+      ++filenumber;
+      continue;
+    }
 
     // If there is no targetfile and there is a complete version
     if (sourcefile->GetTargetFile() == 0 &&
@@ -2280,6 +2329,16 @@ bool Par2Repairer::CreateTargetFiles(void)
   while (sf != sourcefiles.end() && filenumber < mainpacket->TotalFileCount())
   {
     Par2RepairerSourceFile *sourcefile = *sf;
+
+    // MODERNPAR PATCH (see VENDORED.txt): recoverable files only. A missing non-recovery file
+    // must not be recreated (it isn't protected by the set), and doing so walked its unassigned
+    // TargetBlocks() iterator (SIGSEGV).
+    if (filenumber >= mainpacket->RecoverableFileCount())
+    {
+      ++sf;
+      ++filenumber;
+      continue;
+    }
 
     // If the file does not exist
     if (!sourcefile->GetTargetExists())
