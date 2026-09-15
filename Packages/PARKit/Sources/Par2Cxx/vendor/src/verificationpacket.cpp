@@ -19,6 +19,8 @@
 
 #include "libpar2internal.h"
 
+#include <stdexcept> // MODERNPAR PATCH (see VENDORED.txt): SetBlockHashAndCRC bounds check
+
 #ifdef _MSC_VER
 #ifdef _DEBUG
 #undef THIS_FILE
@@ -61,6 +63,13 @@ void VerificationPacket::SetBlockHashAndCRC(u32 blocknumber, const MD5Hash &hash
 {
   assert(packetdata != 0);
   assert(blocknumber < blockcount);
+
+  // MODERNPAR PATCH (see VENDORED.txt): the assert above is compiled out (NDEBUG), and an
+  // out-of-range block number writes past the end of the packet's entries[]. Throw instead
+  // (the shim reports PAR2SHIM_CXX_EXCEPTION) so any future block/file desync fails loudly
+  // rather than corrupting the heap and writing a set with wrong checksums.
+  if (blocknumber >= blockcount)
+    throw std::logic_error("file verification packet: block number out of range");
 
   // Store the block hash and block crc in the packet.
   FILEVERIFICATIONENTRY &entry = ((FILEVERIFICATIONPACKET*)packetdata)->entries[blocknumber];

@@ -30,6 +30,22 @@ All notable changes to ModernPAR are documented here. The format follows
   kept a blank status and showed plain "OK" after the repair.
 - Intact PAR2 files that can only be checked as a whole (empty files, or files whose block
   checksums are missing from the set) now show "OK" instead of a blank status.
+- Creating a PAR2 set from files that included an empty (0-byte) file could record wrong
+  checksums. Folders such as Documents and Downloads contain one (the hidden “.localized”
+  file), as does any folder with a custom icon. The set then reported intact files as
+  damaged, and repairing it rewrote them with shifted data, keeping the originals as
+  “name.1”. Empty files are now left out of new PAR2 sets, as par2cmdline does, and the
+  build window marks them before you create.
+- If you made PAR2 sets with an earlier version from folders like these, turn off “Repair
+  automatically after verifying” (Settings ▸ Basic) before opening them. If one reports
+  damage you don't expect, delete that set's .par2 files and create the set again. If a
+  repair already ran, each “.1” file is your intact original: delete the rewritten file and
+  remove “.1” from the original's name.
+- A file that changes size while a PAR2 set is being created, such as a download still in
+  progress, now stops the create with a message. Before, the create finished with a set that
+  could not verify or repair.
+- A PAR2 create that failed because a set with the same name already existed deleted that
+  existing set. It is now left untouched.
 
 ## [1.0.1] — 2026-09-15
 

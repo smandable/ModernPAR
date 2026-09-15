@@ -210,7 +210,11 @@ bool Par2CreatorSourceFile::Open(NoiseLevel noiselevel, std::ostream &sout, std:
     }
 
     // Did we finish the last block
-    if (need > 0)
+    // MODERNPAR PATCH (see VENDORED.txt): an empty file has no blocks, but `need` starts at
+    // blocksize, so upstream "finished" a block that does not exist and wrote its hash/CRC
+    // past the end of the 0-entry verification packet (heap overflow). For non-empty files
+    // blocknumber < blockcount holds exactly when a partial last block is pending.
+    if (need > 0 && blocknumber < blockcount)
     {
       MD5Hash blockhash;
       u32 blockcrc = HasherGetBlock(hasher, blockhash, need);

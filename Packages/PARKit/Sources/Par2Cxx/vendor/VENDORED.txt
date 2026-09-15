@@ -48,6 +48,49 @@ marked with "MODERNPAR PATCH" in the source):
    in-process EmbeddedEngine against the crafted Fixtures/par2-nonrecovery/ set — reverting this
    patch turns the tests back into a SIGSEGV).
 
+6. src/par2creator.cpp + src/par2creatorsourcefile.cpp + src/verificationpacket.cpp — empty
+   (0-block) source files in CREATE. The CLI skips 0-byte files (commandline.cpp "Skipping 0
+   byte file"), so upstream never exercises them, but libpar2's par2create() — which Par2Shim
+   calls directly — accepts them. Upstream then wrote a 20-byte hash+CRC entry past the end
+   of the empty file's 0-entry verification packet (heap overflow, ASan-reproduced) at two
+   sites, and the first one also wrote wrong checksums. Upstream turbo HEAD, turbo v1.5.0 and Parchive
+   par2cmdline HEAD all still have both.
+     - ProcessData (single-pass with deferred hashing — the default path): the sourcefile
+       iterator advanced only after ++sourceindex >= BlockCount(), so an empty file sorting
+       (by FileId) before a non-empty one was handed the next real block. Every later block
+       hash and full-file hash shifted by one block: the set reports intact data as damaged,
+       and repairing it rewrites intact files with shifted content (the originals survive only
+       as name.1). Fix: step over 0-block files when positioning the iterator, at loop entry
+       and after each advance.
+     - Par2CreatorSourceFile::Open (the non-deferred path: 0 recovery blocks, blocks over
+       MAX_CHUNK_SIZE = 32 MiB — every automatic-size set over ~62.5 GiB — or recovery data
+       beyond the memory limit): need starts at blocksize, so a "last block" was finalized for
+       a file that has none. Fix: finalize only while blocknumber < blockcount.
+   Guards added with it:
+     - VerificationPacket::SetBlockHashAndCRC throws std::logic_error on an out-of-range block
+       (its assert is compiled out by NDEBUG), so any future desync fails as
+       PAR2SHIM_CXX_EXCEPTION instead of silently corrupting the heap.
+     - ComputeBlockCount refuses a set with no source data (every file empty or unreadable —
+       GetFileSize reports 0 for both). Upstream divided by the largest file's block count (0)
+       when sizing scLimited volumes, then collided on output names; the other schemes wrote a
+       useless 0-source-block set.
+     - A source file that changes size during the create now fails it with eFileIOError. The
+       size is read three times: ComputeBlockCount, Par2CreatorSourceFile::Open, and every
+       (re)open in ProcessData (once per pass). CreateSourceBlocks refuses when the per-file
+       block counts no longer add up — a grown file overflowed sourceblocks, and a shrunken one
+       left blocks with no DiskFile (NULL dereference in ProcessData). ProcessData refuses when
+       a file's size at (re)open differs from the size recorded at its first open — upstream
+       hashed and encoded it truncated or zero-filled and "succeeded" with a set that cannot
+       verify or repair. A change that keeps the size, or that happens after the engine's last
+       read of the file, cannot be detected.
+   Output for sets without empty files is byte-identical to upstream. The closing note below
+   does not cover the refusals above: they replace upstream runs that "succeeded" by writing
+   unusable sets. ModernPAR's create path
+   still skips 0-byte files like the CLI (EmbeddedCreate.swift) — PAR2 readers, turbo and
+   par2cmdline included, cannot tell two empty members of one set apart and report a false
+   "wrong name" — so these patches keep the C ABI safe for any caller and cover a file that
+   empties after that check. Regression tests: Tests/Par2KitTests/EmptyFileCreateTests.swift.
+
 Success-path behavior is unchanged by all patches.
 
 SHIM-SIDE MITIGATION (not a patch to this tree; re-check it on every bump):

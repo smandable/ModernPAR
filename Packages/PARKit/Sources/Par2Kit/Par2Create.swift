@@ -11,6 +11,9 @@ public enum Par2Create {
 
     /// Creates `parFile` covering `files` (all in one folder). `recoveryBlockCount` is the
     /// explicit block count — derive it from a redundancy percentage with `RecoveryMath`.
+    /// Files are passed through unfiltered: a 0-byte file becomes a member with no slices
+    /// (see par2shim.h). The app's create path (`EmbeddedEngine.create`) skips them like the
+    /// par2 CLI.
     public static func createSet(
         parFile: URL,
         files: [URL],

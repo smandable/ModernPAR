@@ -126,16 +126,20 @@ enum EngineRunSupport {
     /// The folder's data files, handed to the engine as extra files to scan — the equivalent
     /// of `par2 r set.par2 *`. This is what powers misnamed/renamed-data detection, including
     /// the engine's own `name.N` backups left by an interrupted repair. PAR metadata files
-    /// are excluded (the engine loads those itself).
+    /// are excluded (the engine loads those itself), and so are 0-byte files, which the CLI
+    /// drops too: turbo's scan of an empty extra file returns without setting its match
+    /// result (an uninitialized read that can dereference NULL), and an empty file holds no
+    /// blocks to find. A file whose size can't be read is still passed.
     static func extraFiles(near anchor: URL) -> [URL] {
+        let keys: Set<URLResourceKey> = [.isRegularFileKey, .fileSizeKey]
         guard
             let entries = try? FileManager.default.contentsOfDirectory(
                 at: anchor.deletingLastPathComponent(),
-                includingPropertiesForKeys: [.isRegularFileKey])
+                includingPropertiesForKeys: Array(keys))
         else { return [] }
         return entries.filter { url in
-            guard
-                (try? url.resourceValues(forKeys: [.isRegularFileKey]))?.isRegularFile == true
+            guard let values = try? url.resourceValues(forKeys: keys),
+                values.isRegularFile == true, values.fileSize != 0
             else { return false }
             let ext = url.pathExtension.lowercased()
             return ext != "par2" && ext != "par"

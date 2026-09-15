@@ -71,7 +71,10 @@ public struct HelpView: View {
                     File ▸ New PAR 2 Set (⇧⌘S) or New PAR 1 Set opens a build window: add \
                     files (all from one folder), pick the redundancy (PAR2) or the number \
                     of parity volumes (PAR1), and Create. The recovery files are written \
-                    beside the data they protect and verify cleanly in other PAR tools.
+                    beside the data they protect and verify cleanly in other PAR tools. \
+                    Empty (0-byte) files are left out of PAR2 sets — they hold no data to \
+                    protect, and par2cmdline and the original MacPAR deLuxe skip them too. \
+                    PAR1 sets include them.
                     """)
 
                 section(

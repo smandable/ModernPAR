@@ -186,8 +186,10 @@ Result Par2Creator::Process(
     return eLogicError;
 
   // Initialise all of the source blocks ready to start reading data from the source files.
+  // MODERNPAR PATCH (see VENDORED.txt): it now fails when a source file changed size, which
+  // is an I/O condition, not a logic error.
   if (!CreateSourceBlocks())
-    return eLogicError;
+    return eFileIOError;
 
   // Create all of the output files and allocate all packets to appropriate file offsets.
   if (!InitialiseOutputFiles(parfilename))
@@ -320,6 +322,17 @@ bool Par2Creator::ComputeBlockCount(const std::vector<std::string> &extrafiles)
     return false;
   }
 
+  // MODERNPAR PATCH (see VENDORED.txt): refuse a set with no source data (every source file
+  // empty or unreadable — GetFileSize reports 0 for both; the CLI never gets here because it
+  // skips 0-byte and missing files). Upstream went on to divide by the largest file's block
+  // count (0) while sizing scLimited recovery files and then collided on output names; the
+  // other schemes wrote a useless 0-source-block set.
+  if (count == 0)
+  {
+    serr << "No source data to protect: every source file is empty or could not be read." << std::endl;
+    return false;
+  }
+
   sourceblockcount = (u32)count;
 
   return true;
@@ -445,6 +458,24 @@ bool Par2Creator::CreateCreatorPacket(void)
 // Initialise all of the source blocks ready to start reading data from the source files.
 bool Par2Creator::CreateSourceBlocks(void)
 {
+  // MODERNPAR PATCH (see VENDORED.txt): sourceblockcount came from one size read per file
+  // (ComputeBlockCount) and each file's BlockCount() from a second one (Open). If a file
+  // changed size in between, the per-file counts no longer sum to sourceblockcount: a grown
+  // file wrote past the end of sourceblocks (heap overflow) and a shrunken one left trailing
+  // blocks with no DiskFile (NULL dereference in ProcessData). Refuse instead.
+  u64 openedblockcount = 0;
+  for (std::vector<Par2CreatorSourceFile*>::const_iterator sourcefile = sourcefiles.begin();
+       sourcefile != sourcefiles.end();
+       ++sourcefile)
+  {
+    openedblockcount += (*sourcefile)->BlockCount();
+  }
+  if (openedblockcount != sourceblockcount)
+  {
+    serr << "A source file changed size while the recovery set was being created." << std::endl;
+    return false;
+  }
+
   // Allocate the array of source blocks
   sourceblocks.resize(sourceblockcount);
 
@@ -768,6 +799,19 @@ bool Par2Creator::ProcessData(u64 blockoffset, size_t blocklength)
   std::vector<Par2CreatorSourceFile*>::iterator sourcefile = sourcefiles.begin();
   u32 sourceindex = 0;
 
+  // MODERNPAR PATCH (see VENDORED.txt): step over 0-block (empty) source files so that
+  // sourcefile always names the file that owns the current source block. Upstream only
+  // advances after ++sourceindex >= BlockCount(), so an empty file that sorts (by FileId)
+  // before a non-empty one "owned" the next real block: UpdateHashes(0, ...) wrote past the
+  // end of its 0-entry verification packet (heap overflow) and every later block hash and
+  // full-file hash was shifted by one block — a set that verifies pristine data as damaged.
+  auto skipemptysourcefiles = [&]()
+  {
+    while (sourcefile != sourcefiles.end() && (*sourcefile)->BlockCount() == 0)
+      ++sourcefile;
+  };
+  skipemptysourcefiles();
+
   std::vector<DataBlock>::iterator sourceblock;
   u32 inputblock;
 
@@ -803,8 +847,19 @@ bool Par2Creator::ProcessData(u64 blockoffset, size_t blocklength)
 
       // Open the new file
       lastopenfile = (*sourceblock).GetDiskFile();
+      // MODERNPAR PATCH (see VENDORED.txt): Open() re-reads the size, but the blocks, hashes
+      // and recovery data were planned from the size recorded when the file was first opened
+      // (Close() keeps it). A file that changed size since (a download still being written)
+      // was hashed and encoded truncated or zero-filled, and create still succeeded with a
+      // set that cannot verify or repair. Refuse instead. Multi-pass runs re-check every pass.
+      const u64 plannedsize = lastopenfile->FileSize();
       if (!lastopenfile->Open())
       {
+        return false;
+      }
+      if (lastopenfile->FileSize() != plannedsize)
+      {
+        serr << "A source file changed size while the recovery set was being created." << std::endl;
         return false;
       }
     }
@@ -849,6 +904,7 @@ bool Par2Creator::ProcessData(u64 blockoffset, size_t blocklength)
     {
       sourceindex = 0;
       ++sourcefile;
+      skipemptysourcefiles(); // MODERNPAR PATCH (see above)
     }
   }
 

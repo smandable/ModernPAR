@@ -112,6 +112,37 @@ public struct CreateRequest: Sendable {
     }
 }
 
+extension CreateRequest {
+    /// How the create path sizes a source file — the way the engine's
+    /// `DiskFile::GetFileSize` does: POSIX `stat()`, which follows symlinks and reads the file
+    /// system NOW. (URL resource values are cached per URL instance — the build window read
+    /// these same instances when the files were added, so a file still being written would
+    /// keep its old size — and they report a symlink's own size.) A file that isn't a regular
+    /// file counts as 0 bytes, as it does for the engine. nil when `stat()` fails (a missing
+    /// file or a dangling link): never 0, which would silently leave the file out of the set.
+    public static func sourceFileSize(of url: URL) -> UInt64? {
+        var info = stat()
+        guard stat(url.path, &info) == 0 else { return nil }
+        guard (info.st_mode & S_IFMT) == S_IFREG else { return 0 }
+        return UInt64(info.st_size)
+    }
+
+    /// A source file's name for notes and log lines: control characters (a custom folder
+    /// icon's file is named "Icon\r") become %XX, the way the engine prints such names, so a
+    /// name can never break a message across lines.
+    public static func displayName(of url: URL) -> String {
+        var name = ""
+        for scalar in url.lastPathComponent.unicodeScalars {
+            if scalar.value < 32 {
+                name += String(format: "%%%02X", scalar.value)
+            } else {
+                name.unicodeScalars.append(scalar)
+            }
+        }
+        return name
+    }
+}
+
 /// Authoring side of the engine seam: produces a recovery set, streaming the same
 /// `EngineEvent`s as verify/repair so the window renders create with identical machinery.
 /// The concrete (`EmbeddedEngine`) lives in Par2Kit and is injected, keeping Core C++-free.

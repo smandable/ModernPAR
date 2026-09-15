@@ -1,5 +1,6 @@
 import Foundation
 import ModernPARCore
+import Par2Cxx
 import Testing
 
 @testable import Par2Kit
@@ -210,6 +211,167 @@ struct EmbeddedCreateTests {
         } else {
             Issue.record("expected launchFailed, got \(error)")
         }
+        #expect(!FileManager.default.fileExists(atPath: parFile.path))
+    }
+
+    // MARK: - Empty (0-byte) files are left out, like the par2 CLI
+
+    private func logLines(_ events: [EngineEvent]) -> [String] {
+        events.compactMap { event -> String? in
+            if case .logLine(let line) = event { return line }
+            return nil
+        }
+    }
+
+    @Test func emptyFilesAreLeftOutAndTheSetVerifiesClean() async throws {
+        // A dropped folder brings hidden 0-byte files along with the data (".localized", the
+        // custom-icon file "Icon\r"). Before the fix, an empty file whose File ID sorted ahead
+        // of the data shifted every later checksum, so the new set reported intact files as
+        // damaged ("empty-ae7" always sorts first — see EmptyFileCreateTests).
+        let (dir, urls) = try makeFolder([
+            ("alpha.bin", 300_000), (".localized", 0), ("beta.bin", 70_000), ("Icon\r", 0),
+            ("empty-ae7", 0),
+        ])
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let parFile = dir.appendingPathComponent("folder.par2")
+
+        let events = await collect(
+            EmbeddedEngine().create(
+                try request(
+                    parFile: parFile, files: urls,
+                    options: CreateOptions(redundancyPercent: 10))))
+        guard case .success = finalResult(events) else {
+            Issue.record("create failed: \(String(describing: finalResult(events)))")
+            return
+        }
+        let logs = logLines(events)
+        // Control characters print as %XX, as the engine prints them, so "Icon\r" can't split
+        // the line.
+        for name in [".localized", "Icon%0D", "empty-ae7"] {
+            #expect(
+                logs.contains(
+                    "Skipping empty file “\(name)” — a 0-byte file has no data to protect."))
+        }
+        #expect(logs.contains { $0.hasPrefix("Creating folder.par2: 2 file(s),") })
+
+        // Only the files with data are in the set...
+        let set = try Par2Parser.loadSet(anchor: parFile)
+        #expect(
+            Set(set.recoveryFileIDs.compactMap { set.descriptions[$0]?.asciiName })
+                == ["alpha.bin", "beta.bin"])
+        #expect(set.nonRecoveryFileIDs.isEmpty)
+
+        // ...and it verifies clean with the empty files still in the folder.
+        let route = SessionRoute(
+            mode: .verifyRepair,
+            folderBookmark: try? ScopedAccess.bookmark(for: dir),
+            anchorBookmark: try ScopedAccess.bookmark(for: parFile))
+        let verifyEvents = await collect(EmbeddedEngine().run(route))
+        #expect(
+            verifyEvents.contains {
+                if case .docStatusChanged(.allFilesOK) = $0 { return true }
+                return false
+            }, "embedded verify of the created set should be clean")
+        if let ok = par2CliVerifies(parFile: parFile) {
+            #expect(ok, "par2 CLI should verify the created set clean")
+        }
+    }
+
+    @MainActor
+    @Test func aFileThatGainsDataAfterBeingAddedIsProtected() async throws {
+        // Staged while still empty (a download or export still writing, or a file the user
+        // then saves into), it has data by the time Create is pressed. The build window read
+        // its size when it was added; the run must judge it by its size now. (Foundation caches
+        // resource values per URL instance, so re-reading them through the same URLs returned
+        // the add-time 0 and the file was silently left out.)
+        let (dir, urls) = try makeFolder([("data.bin", 100_000), ("late.bin", 0)])
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let model = CreateModel(kind: .par2)
+        model.add(urls)
+        #expect(model.skippedEmptyItems.map(\.name) == ["late.bin"])
+        try Data(repeating: 7, count: 50_000).write(to: urls[1])
+
+        let parFile = dir.appendingPathComponent("set.par2")
+        let events = await collect(
+            EmbeddedEngine().create(
+                model.makeRequest(
+                    parFile: parFile, folderBookmark: try? ScopedAccess.bookmark(for: dir))))
+        guard case .success = finalResult(events) else {
+            Issue.record("create failed: \(String(describing: finalResult(events)))")
+            return
+        }
+        #expect(!logLines(events).contains { $0.hasPrefix("Skipping") })
+        let set = try Par2Parser.loadSet(anchor: parFile)
+        #expect(
+            Set(set.recoveryFileIDs.compactMap { set.descriptions[$0]?.asciiName })
+                == ["data.bin", "late.bin"])
+    }
+
+    @Test func aCreateThatCollidesWithAnExistingSetLeavesItAlone() async throws {
+        // The engine never overwrites a set, so creating one under an existing set's name fails
+        // ("File already exists"). The failed run's cleanup used to delete the EXISTING set as
+        // if the run had written it.
+        let (dir, urls) = try makeFolder([("data.bin", 200_000)])
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let parFile = dir.appendingPathComponent("set.par2")
+        let first = await collect(
+            EmbeddedEngine().create(
+                try request(parFile: parFile, files: urls, options: CreateOptions())))
+        guard case .success = finalResult(first) else {
+            Issue.record("first create failed: \(String(describing: finalResult(first)))")
+            return
+        }
+        let names = try FileManager.default.contentsOfDirectory(atPath: dir.path)
+            .filter { $0.hasSuffix(".par2") }.sorted()
+        let original = try names.map { try Data(contentsOf: dir.appendingPathComponent($0)) }
+
+        let second = await collect(
+            EmbeddedEngine().create(
+                try request(parFile: parFile, files: urls, options: CreateOptions())))
+        guard case .failure(.engine(let code, _))? = finalResult(second) else {
+            Issue.record(
+                "expected the engine to refuse, got \(String(describing: finalResult(second)))")
+            return
+        }
+        #expect(code == Int32(PAR2SHIM_FILE_IO_ERROR.rawValue))
+        let after = try FileManager.default.contentsOfDirectory(atPath: dir.path)
+            .filter { $0.hasSuffix(".par2") }.sorted()
+        #expect(after == names, "the existing set's files must all still be there")
+        #expect(try after.map { try Data(contentsOf: dir.appendingPathComponent($0)) } == original)
+    }
+
+    @Test func onlyEmptyFilesFailCleanly() async throws {
+        let (dir, urls) = try makeFolder([("e1", 0), ("e2", 0)])
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let parFile = dir.appendingPathComponent("empty.par2")
+        let events = await collect(
+            EmbeddedEngine().create(
+                try request(parFile: parFile, files: urls, options: CreateOptions())))
+        guard case .failure(.launchFailed)? = finalResult(events) else {
+            Issue.record("expected launchFailed, got \(String(describing: finalResult(events)))")
+            return
+        }
+        #expect(logLines(events).contains("[err] No non-empty files to protect."))
+        #expect(!FileManager.default.fileExists(atPath: parFile.path))
+    }
+
+    @Test func aMissingFileIsNotMistakenForAnEmptyOne() async throws {
+        // A size that can't be read is not 0: the file stays in the list, so the create fails
+        // loudly instead of silently protecting fewer files than the user chose.
+        let (dir, urls) = try makeFolder([("real.bin", 100_000)])
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let parFile = dir.appendingPathComponent("set.par2")
+        let missing = dir.appendingPathComponent("gone.bin")
+        let events = await collect(
+            EmbeddedEngine().create(
+                try request(parFile: parFile, files: urls + [missing], options: CreateOptions())))
+        guard case .failure(.engine(let code, _))? = finalResult(events) else {
+            Issue.record(
+                "expected an engine failure, got \(String(describing: finalResult(events)))")
+            return
+        }
+        #expect(code == Int32(PAR2SHIM_FILE_IO_ERROR.rawValue))
+        #expect(!logLines(events).contains { $0.hasPrefix("Skipping") })
         #expect(!FileManager.default.fileExists(atPath: parFile.path))
     }
 

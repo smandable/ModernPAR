@@ -39,8 +39,28 @@ extension EmbeddedEngine: Par2Creator {
 
         continuation.yield(.docStatusChanged(.creating))
 
-        let sizes = request.files.map { fileSize(of: $0) }
-        guard !request.files.isEmpty, sizes.contains(where: { $0 > 0 }) else {
+        // Empty files are left out of the set, as the par2 CLI (and the original MacPAR
+        // deLuxe, which drove it) does: they hold no data to protect, and PAR2 readers —
+        // turbo and par2cmdline alike — cannot tell two empty members of one set apart, so
+        // intact data verifies as "wrong name". Sizes are read fresh, the way the engine reads
+        // them (`sourceFileSize`), and only a size actually READ as 0 counts: an unreadable or
+        // missing file stays in the list, so the engine fails loudly instead of the set
+        // silently covering fewer files than the user chose.
+        var files: [URL] = []
+        var sizes: [UInt64] = []
+        for url in request.files {
+            let size = CreateRequest.sourceFileSize(of: url)
+            if size == 0 {
+                continuation.yield(
+                    .logLine(
+                        "Skipping empty file “\(CreateRequest.displayName(of: url))” — a 0-byte file has no data to protect."
+                    ))
+                continue
+            }
+            files.append(url)
+            sizes.append(size ?? 0)
+        }
+        guard !files.isEmpty, sizes.contains(where: { $0 > 0 }) else {
             continuation.yield(.logLine("[err] No non-empty files to protect."))
             continuation.yield(.docStatusChanged(.createFailed))
             continuation.yield(.finished(.failure(.launchFailed("no files to protect"))))
@@ -60,12 +80,18 @@ extension EmbeddedEngine: Par2Creator {
 
         continuation.yield(
             .logLine(
-                "Creating \(request.parFile.lastPathComponent): \(request.files.count) file(s), block size \(blockSize) bytes, \(sourceBlocks) source + \(recoveryBlocks) recovery block(s) (\(request.options.redundancyPercent)%)."
+                "Creating \(request.parFile.lastPathComponent): \(files.count) file(s), block size \(blockSize) bytes, \(sourceBlocks) source + \(recoveryBlocks) recovery block(s) (\(request.options.redundancyPercent)%)."
             ))
+
+        // A set already using this name is never this run's to delete. The engine refuses to
+        // overwrite it ("File already exists"), so that failure must not be cleaned up as if
+        // the run had written it — that deleted the existing set.
+        let preexisting = existingOutputNames(for: request)
 
         let bridge = CreateBridge(continuation: continuation)
         let result = shimCreate(
-            request: request, blockSize: blockSize, recoveryBlocks: UInt32(recoveryBlocks),
+            request: request, files: files, blockSize: blockSize,
+            recoveryBlocks: UInt32(recoveryBlocks),
             scheme: shimScheme(for: request.options.fileScheme), threads: threads,
             token: token, bridge: bridge)
 
@@ -73,12 +99,12 @@ extension EmbeddedEngine: Par2Creator {
             // par2create writes the index + recovery volumes progressively and does NOT unlink
             // them when its should_cancel poll throws — a cancelled create would otherwise
             // litter the user's folder with a partial set. Reclaim them under the held scope.
-            cleanupPartialOutput(request: request)
+            cleanupPartialOutput(request: request, keeping: preexisting)
             continuation.yield(.finished(.failure(.cancelled)))
             return
         }
         guard result == PAR2SHIM_SUCCESS else {
-            cleanupPartialOutput(request: request)
+            cleanupPartialOutput(request: request, keeping: preexisting)
             continuation.yield(.docStatusChanged(.createFailed))
             continuation.yield(.overallProgress(fraction: 1))
             continuation.yield(
@@ -105,6 +131,7 @@ extension EmbeddedEngine: Par2Creator {
 
     private static func shimCreate(
         request: CreateRequest,
+        files: [URL],
         blockSize: UInt64,
         recoveryBlocks: UInt32,
         scheme: Par2ShimScheme,
@@ -114,7 +141,7 @@ extension EmbeddedEngine: Par2Creator {
     ) -> Par2ShimResult {
         let bridgeContext = Unmanaged.passUnretained(bridge).toOpaque()
         let tokenContext = Unmanaged.passUnretained(token).toOpaque()
-        let argv: [UnsafePointer<CChar>?] = request.files.map { UnsafePointer(strdup($0.path)) }
+        let argv: [UnsafePointer<CChar>?] = files.map { UnsafePointer(strdup($0.path)) }
         defer {
             for pointer in argv { free(UnsafeMutablePointer(mutating: pointer)) }
         }
@@ -123,7 +150,7 @@ extension EmbeddedEngine: Par2Creator {
                 request.parFile.path,
                 nil,
                 buffer.baseAddress,
-                request.files.count,
+                files.count,
                 blockSize,
                 recoveryBlocks,
                 scheme,
@@ -146,31 +173,33 @@ extension EmbeddedEngine: Par2Creator {
         }
     }
 
-    /// Best-effort removal of a cancelled/failed create's partial output: the index `.par2`
-    /// and the recovery volumes par2 names `<stem>.volNNN+MMM.par2`. Source files (which never
-    /// match the `.par2` extension) are untouched. Runs under the folder scope held by the
-    /// caller. (Phase 6 review: a cancelled create must not leave litter behind.)
-    /// Internal (not private) so the regression test can drive it deterministically.
-    static func cleanupPartialOutput(request: CreateRequest) {
+    /// Names in the output folder that belong to this request's set name: the index
+    /// `<stem>.par2` and the recovery volumes par2 names `<stem>.volNNN+MMM.par2`. Source files
+    /// (even `.par2`-named ones) are excluded.
+    static func existingOutputNames(for request: CreateRequest) -> Set<String> {
         let folder = request.parFile.deletingLastPathComponent()
         let stem = (request.parFile.lastPathComponent as NSString).deletingPathExtension
-        guard
-            let entries = try? FileManager.default.contentsOfDirectory(
-                at: folder, includingPropertiesForKeys: nil, options: [])
-        else { return }
+        guard let names = try? FileManager.default.contentsOfDirectory(atPath: folder.path)
+        else { return [] }
         let sourceNames = Set(request.files.map { $0.lastPathComponent })
-        for entry in entries {
-            let name = entry.lastPathComponent
-            guard name.lowercased().hasSuffix(".par2"), !sourceNames.contains(name),
-                name == "\(stem).par2" || name.hasPrefix("\(stem).vol")
-            else { continue }
-            try? FileManager.default.removeItem(at: entry)
-        }
+        return Set(
+            names.filter { name in
+                name.lowercased().hasSuffix(".par2") && !sourceNames.contains(name)
+                    && (name == "\(stem).par2" || name.hasPrefix("\(stem).vol"))
+            })
     }
 
-    private static func fileSize(of url: URL) -> UInt64 {
-        (try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize).flatMap { $0 }
-            .map(UInt64.init) ?? 0
+    /// Best-effort removal of a cancelled/failed create's partial output. Source files and the
+    /// names in `preexisting` — files that were there before the run, such as an existing set
+    /// with the same name, which the engine refuses to overwrite — are untouched. Runs under
+    /// the folder scope held by the caller. (Phase 6 review: a cancelled create must not leave
+    /// litter behind.) Internal (not private) so the regression test can drive it directly.
+    static func cleanupPartialOutput(request: CreateRequest, keeping preexisting: Set<String> = [])
+    {
+        let folder = request.parFile.deletingLastPathComponent()
+        for name in existingOutputNames(for: request).subtracting(preexisting) {
+            try? FileManager.default.removeItem(at: folder.appendingPathComponent(name))
+        }
     }
 
     private static func createMessage(for result: Par2ShimResult) -> String {

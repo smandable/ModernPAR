@@ -75,7 +75,10 @@ typedef int (*Par2ShimShouldCancel)(void *context);
  * one-slice-at-a-time processing).
  * `extra_files` (may be NULL when count is 0): additional files to scan for misplaced data —
  * the folder's data files, like `par2 r set.par2 *`. This is what lets the engine find
- * renamed/misnamed sources, including its own `name.1` backups from an interrupted repair. */
+ * renamed/misnamed sources, including its own `name.1` backups from an interrupted repair.
+ * Leave 0-byte files out, as the CLI does: turbo's scan of an empty extra file returns
+ * without setting its match result (an uninitialized read that can dereference NULL), and an
+ * empty file can never supply blocks anyway. */
 Par2ShimResult par2shim_repair(
     const char *par2_path,
     const char *base_path,
@@ -92,7 +95,15 @@ Par2ShimResult par2shim_repair(
 /* Create a recovery set named `par2_path` covering `files` (absolute paths, all within one
  * folder — `base_path` NULL defaults like par2shim_repair). `block_size` must be a positive
  * multiple of 4. `recovery_block_count` is the explicit count (the Swift layer derives it
- * from a redundancy %). `recovery_file_count` 0 = automatic for the scheme. */
+ * from a redundancy %). `recovery_file_count` 0 = automatic for the scheme.
+ * 0-byte files are accepted and recorded as members with no slices (VENDORED.txt patch 6
+ * makes that safe), unlike the CLI, which skips them. Apps should skip them too, as
+ * EmbeddedCreate does: PAR2 readers (turbo and par2cmdline alike) cannot tell two empty
+ * members of one set apart and report a false "wrong name". A list with no data at all
+ * (every file empty or unreadable) fails with PAR2SHIM_INVALID_ARGS. A file whose size
+ * changes before the engine has finished reading it fails with PAR2SHIM_FILE_IO_ERROR; a
+ * change that keeps the size, or comes after the engine's last read of that file, cannot be
+ * detected. */
 Par2ShimResult par2shim_create(
     const char *par2_path,
     const char *base_path,

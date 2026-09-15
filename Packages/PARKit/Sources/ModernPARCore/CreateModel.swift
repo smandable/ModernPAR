@@ -13,10 +13,15 @@ public final class CreateModel {
         public let id: URL
         public var name: String { url.lastPathComponent }
         public var url: URL { id }
+        /// 0 when the size could not be read.
         public var sizeBytes: UInt64
-        public init(url: URL, sizeBytes: UInt64) {
+        /// The size was READ as 0. An unreadable file is not "empty": it stays in the set and
+        /// the engine reports it.
+        public var isEmpty: Bool
+        public init(url: URL, sizeBytes: UInt64, isEmpty: Bool = false) {
             self.id = url
             self.sizeBytes = sizeBytes
+            self.isEmpty = isEmpty
         }
     }
 
@@ -83,7 +88,8 @@ public final class CreateModel {
             }
             guard !items.contains(where: { $0.url.standardizedFileURL == url.standardizedFileURL })
             else { continue }
-            items.append(Item(url: url, sizeBytes: Self.fileSize(of: url)))
+            let size = CreateRequest.sourceFileSize(of: url)
+            items.append(Item(url: url, sizeBytes: size ?? 0, isEmpty: size == 0))
             added.append(url.lastPathComponent)
         }
         items.sort { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
@@ -124,6 +130,35 @@ public final class CreateModel {
         }
     }
     public var canCreate: Bool { !items.isEmpty && validationErrors.isEmpty }
+
+    /// Whether a PAR2 set will leave this staged file out because it is empty — like the par2
+    /// CLI (and the original MacPAR deLuxe, which drove it): it holds no data to protect, and
+    /// PAR2 readers cannot tell two empty members of one set apart. EmbeddedCreate re-checks
+    /// every size at run time. PAR1 sets include empty files, as the original `par` did.
+    public func leavesOut(_ item: Item) -> Bool {
+        kind == .par2 && item.isEmpty
+    }
+
+    /// The staged files `leavesOut` — they stay listed but are not protected.
+    public var skippedEmptyItems: [Item] { items.filter(leavesOut) }
+
+    /// How many staged files the set will actually protect.
+    public var includedItemCount: Int { items.count - skippedEmptyItems.count }
+
+    /// The build window's quiet (non-blocking) note about `skippedEmptyItems`; nil when none.
+    public var emptyFilesNote: String? {
+        let skipped = skippedEmptyItems
+        switch skipped.count {
+        case 0:
+            return nil
+        case 1:
+            return
+                "“\(CreateRequest.displayName(of: skipped[0].url))” is empty and will be left out — an empty file has no data for a PAR2 set to protect."
+        default:
+            return
+                "\(skipped.count) empty files will be left out — empty files have no data for a PAR2 set to protect."
+        }
+    }
 
     /// PAR1 validation, mirroring the originals' wording (doc-01 §5.2: `WrongNumPARErr`,
     /// `WrongNumFilesPerPARErr`, `TooManyFilesForPar1Err`).
@@ -205,8 +240,4 @@ public final class CreateModel {
         return url.standardizedFileURL.path
     }
 
-    private static func fileSize(of url: URL) -> UInt64 {
-        (try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize).flatMap { $0 }
-            .map(UInt64.init) ?? 0
-    }
 }

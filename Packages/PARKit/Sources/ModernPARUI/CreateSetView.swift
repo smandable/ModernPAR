@@ -121,8 +121,11 @@ struct CreateSetView: View {
         Table(create.items, selection: $selection) {
             TableColumn("Name", value: \.name)
             TableColumn("Size") { item in
-                Text(item.sizeBytes.formatted(.byteCount(style: .file)))
-                    .monospacedDigit().foregroundStyle(.secondary)
+                Text(
+                    create.leavesOut(item)
+                        ? "Empty — left out" : item.sizeBytes.formatted(.byteCount(style: .file))
+                )
+                .monospacedDigit().foregroundStyle(.secondary)
             }
             .width(min: 80, ideal: 100)
         }
@@ -165,7 +168,7 @@ struct CreateSetView: View {
                     LabeledContent(
                         "Set",
                         value:
-                            "\(create.items.count) file(s), \(create.totalBytes.formatted(.byteCount(style: .file)))"
+                            "\(create.includedItemCount) file(s), \(create.totalBytes.formatted(.byteCount(style: .file)))"
                     )
                     if isPar1 {
                         LabeledContent(
@@ -179,6 +182,9 @@ struct CreateSetView: View {
                             value:
                                 "\(create.sourceBlockCount) source + \(create.recoveryBlockCount) recovery · \(create.effectiveBlockSize.formatted(.byteCount(style: .file))) block"
                         )
+                    }
+                    if let note = create.emptyFilesNote {
+                        Text(note).font(.callout).foregroundStyle(.secondary)
                     }
                 }
             }
