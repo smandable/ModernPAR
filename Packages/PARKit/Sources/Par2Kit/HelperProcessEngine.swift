@@ -79,8 +79,8 @@ public final class HelperProcessEngine: PAR2Engine, Sendable {
 
         let bridge = LineBridge(
             parser: TurboOutputParser(
-                fileIDsByName: roster.names, nonRecoveryIDs: roster.nonRecoveryIDs,
-                repairsAutomatically: repairs),
+                fileIDsByName: roster.fileIDsByName, blockCounts: roster.blockCounts,
+                nonRecoveryIDs: roster.nonRecoveryIDs, repairsAutomatically: repairs),
             continuation: continuation)
 
         let process = Process()

@@ -8,6 +8,11 @@ public enum EngineEvent: Sendable {
     /// verification, so the UI can paint the status grid immediately. (ARCHITECTURE.md §1.3)
     case filesDiscovered([FileEntry])
     case fileStatusChanged(id: UUID, status: FileStatus)
+    /// Recovery blocks a damaged or missing file needs — the file table's "Blocks needed"
+    /// column. Engines emit it with the set-level verdict, AFTER the file's final
+    /// damaged/missing status: the session keeps a count only on a row in one of those
+    /// states, and clears it when the row leaves them (e.g. recovered).
+    case fileBlocksNeeded(id: UUID, blocks: Int)
     case overallProgress(fraction: Double)  // 0...1
     case logLine(String)  // raw helper output → "Show par Output" pane
     case docStatusChanged(DocStatus)

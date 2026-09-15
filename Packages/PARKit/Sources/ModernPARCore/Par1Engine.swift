@@ -267,6 +267,12 @@ public final class Par1Engine: PAR2Engine, Sendable {
                     : .unrecoverableCorrupt
             }
             continuation.yield(.fileStatusChanged(id: id, status: status))
+            // A PAR1 volume is exactly one recovery block covering every in-set file, and a
+            // file is one unit of the parity math — a damaged or missing in-set file needs one
+            // block. Non-contributing files can never be rebuilt from parity: no count.
+            if outcome.file.isInParitySet, outcome.state.needsRecovery {
+                continuation.yield(.fileBlocksNeeded(id: id, blocks: 1))
+            }
         }
     }
 

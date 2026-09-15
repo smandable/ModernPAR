@@ -225,6 +225,25 @@ struct HelperProcessEngineTests {
         #expect(FileManager.default.fileExists(atPath: proper.path))
     }
 
+    @Test func blocksNeededMatchesTheEmbeddedContract() async throws {
+        // Same scenarios as Par2BlocksNeededTests, through the subprocess: the counts come
+        // from the shared output parser, so both engines must agree block for block.
+        for (damage, expected) in [
+            (DamagedVolumeSet.applyReportedDamage, DamagedVolumeSet.reportedDamage),
+            (DamagedVolumeSet.applyForeignDamage, DamagedVolumeSet.foreignDamage),
+            (DamagedVolumeSet.applyInterruptedRepairShape, DamagedVolumeSet.interruptedRepair),
+        ] {
+            let set = try DamagedVolumeSet.make()
+            defer { set.remove() }
+            try damage(set)()
+            let events = await collect(
+                makeEngine(repairs: false).run(try route(anchor: set.parFile, folder: set.folder)))
+            let counts = try set.blocksNeeded(in: events)
+            #expect(counts == expected)
+            #expect(counts.values.reduce(0, +) == DamagedVolumeSet.missingDataBlocks(in: events))
+        }
+    }
+
     @Test func argumentBuilderMapsTheCLIContract() {
         #expect(
             ArgumentBuilder.verifyRepair(par2Path: "/x/set.par2", repair: false)

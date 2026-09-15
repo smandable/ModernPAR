@@ -10,7 +10,9 @@ public struct FileEntry: Identifiable, Equatable, Sendable {
     public var name: String
     public var sizeBytes: UInt64
     public var status: FileStatus
-    /// Recovery blocks still needed to repair this file — feeds the "need N more blocks" report.
+    /// Recovery blocks still needed to repair this file (the "Blocks needed" column). Set from
+    /// the engine's verify verdict for damaged/missing files; 0 means none — every other
+    /// status, including a file repaired this run.
     public var blocksNeeded: Int
 
     public init(

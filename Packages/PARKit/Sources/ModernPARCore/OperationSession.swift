@@ -699,7 +699,19 @@ public final class OperationSession {
                     uniquingKeysWith: { first, _ in first }
                 )
             case .fileStatusChanged(let id, let status):
-                if let i = indexByID[id] { rows[i].status = status }
+                if let i = indexByID[id] {
+                    rows[i].status = status
+                    // A count belongs to a damaged/missing row only: recovery, a rename, or a
+                    // re-check clears it, so a repaired file never shows a stale need. Guarded
+                    // so the common all-OK sweep stays one mutation per event at 32k rows.
+                    if !status.isDamagedOrMissing, rows[i].blocksNeeded != 0 {
+                        rows[i].blocksNeeded = 0
+                    }
+                }
+            case .fileBlocksNeeded(let id, let blocks):
+                if let i = indexByID[id], rows[i].status.isDamagedOrMissing {
+                    rows[i].blocksNeeded = max(0, blocks)
+                }
             case .overallProgress(let fraction):
                 progress = fraction
             case .logLine(let line):

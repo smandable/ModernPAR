@@ -74,8 +74,8 @@ public final class EmbeddedEngine: PAR2Engine, Sendable {
 
         let bridge = LineBridge(
             parser: TurboOutputParser(
-                fileIDsByName: roster.names, nonRecoveryIDs: roster.nonRecoveryIDs,
-                repairsAutomatically: repairs),
+                fileIDsByName: roster.fileIDsByName, blockCounts: roster.blockCounts,
+                nonRecoveryIDs: roster.nonRecoveryIDs, repairsAutomatically: repairs),
             continuation: continuation)
         let result = Self.shimRepair(
             anchor: anchor, repair: repairs, threads: threads, token: token, bridge: bridge)

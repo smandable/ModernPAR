@@ -8,7 +8,7 @@ All notable changes to ModernPAR are documented here. The format follows
 
 ### Fixed
 - Fixed a crash (and a related silent-non-repair) when verifying or repairing a PAR2 set that
-  lists a file as a *non-recovery* member — an "other file" recorded in the set but not
+  lists a file as a non-recovery member — an "other file" recorded in the set but not
   protected by it. A crafted or third-party `.par2` could make the in-process engine crash the
   whole app on any such file with content, and a set whose only intact recoverable member was
   reported alongside an intact non-recovery file could be declared repaired without actually
@@ -18,6 +18,17 @@ All notable changes to ModernPAR are documented here. The format follows
   missing or unreadable, the status now reads "Only non-recoverable files are missing" instead
   of overstating "All files are correct", and the file's row stays "not in set" rather than
   showing a spinner that never resolves.
+- The file list's "Blocks needed" column now shows how many recovery blocks each damaged
+  or missing file needs; it always showed "—". PAR2 counts match par2cmdline's per-file report
+  ("Found 91 of 100 data blocks" means 9 needed), take into account blocks found in other files
+  (such as a partial copy under another name, or the backup an interrupted repair leaves
+  behind), and clear once the file is repaired. A damaged or missing PAR1 file needs one block,
+  since each PAR1 recovery volume restores one file.
+- A PAR2 data file that is still present but holds none of its original data (overwritten or
+  zero-filled) is now shown as damaged and reported as repaired afterwards. Before, its row
+  kept a blank status and showed plain "OK" after the repair.
+- Intact PAR2 files that can only be checked as a whole (empty files, or files whose block
+  checksums are missing from the set) now show "OK" instead of a blank status.
 
 ## [1.0.1] — 2026-09-15
 

@@ -36,33 +36,47 @@ enum EngineRunSupport {
         return Scopes(anchor: anchor, stops: stops)
     }
 
-    /// What `paintRoster` hands the parser: the engine-printed-name → row-id map, plus the row
-    /// ids of the NON-recovery ("other") files — files listed in the Main packet but not part
-    /// of the recovery set. The parser needs those to keep such rows "not in set" (never a
-    /// dangling "checking"/"missing") and to report `.onlyNonRecoverableMissing` rather than
-    /// `.allFilesOK` when one is absent or unreadable.
+    /// What the output parser needs from the native parse: engine-printed name → row id, each
+    /// recovery-set file's source-block count (row id → `ceil(size / sliceSize)`, the engine's
+    /// own per-file allocation) for the "Blocks needed" column, and the row ids of the
+    /// NON-recovery ("other") files — listed in the Main packet but not part of the recovery
+    /// set. The parser keeps those rows "not in set" (never a dangling "checking"/"missing") and
+    /// reports `.onlyNonRecoverableMissing` rather than `.allFilesOK` when one is absent or
+    /// unreadable.
     struct Roster {
-        let names: [String: UUID]
-        let nonRecoveryIDs: Set<UUID>
-        static let empty = Roster(names: [:], nonRecoveryIDs: [])
+        var fileIDsByName: [String: UUID] = [:]
+        var blockCounts: [UUID: Int] = [:]
+        var nonRecoveryIDs: Set<UUID> = []
     }
 
     /// The native parser is the model; the engine is the actuator. Paints the roster so the UI
-    /// has rows before the first engine line, and returns the name map + non-recovery row ids.
+    /// has rows before the first engine line, and returns what the output parser keys on.
     /// (ARCHITECTURE.md §1.3)
     static func paintRoster(
         anchor: URL, continuation: AsyncStream<EngineEvent>.Continuation
     ) -> Roster {
         guard let set = try? Par2Parser.loadSet(anchor: anchor) else {
             continuation.yield(.scanningStarted(totalFiles: 0))
-            return .empty
+            return Roster()
         }
         let parSet = ParSet(par2: set)
         continuation.yield(.scanningStarted(totalFiles: parSet.files.count))
         continuation.yield(.filesDiscovered(parSet.files))
         return Roster(
-            names: rosterNames(for: set),
+            fileIDsByName: rosterNames(for: set), blockCounts: blockCounts(for: set),
             nonRecoveryIDs: Set(set.nonRecoveryFileIDs.map(\.uuid)))
+    }
+
+    /// Source blocks per recovery-set file. Non-recovery files are left out on purpose: no
+    /// recovery block can rebuild them, so they never get a "Blocks needed" count.
+    static func blockCounts(for set: Par2RecoverySet) -> [UUID: Int] {
+        var counts: [UUID: Int] = [:]
+        for id in set.recoveryFileIDs {
+            guard let description = set.descriptions[id] else { continue }
+            counts[id.uuid] = RecoveryMath.sourceBlocks(
+                fileSize: description.length, sliceSize: set.sliceSize)
+        }
+        return counts
     }
 
     /// Sandbox heads-up: with only a single-file grant the engine cannot read the sibling data

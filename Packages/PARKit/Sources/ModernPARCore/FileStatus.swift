@@ -41,6 +41,18 @@ public enum FileStatus: Sendable, Equatable {
         }
     }
 
+    /// The file's data is damaged or missing, whether or not the set can rebuild it — the
+    /// only states in which a "blocks needed" count means anything.
+    public var isDamagedOrMissing: Bool {
+        switch self {
+        case .recoverableMissing, .recoverableCorrupt, .unrecoverableMissing,
+            .unrecoverableCorrupt:
+            return true
+        case .ok, .recovered, .renamed, .pending, .checking, .notInSet, .possibleError:
+            return false
+        }
+    }
+
     /// Terminal-OK states are *sticky* across a re-run, reproducing the original's
     /// "remember files already OK and skip them on Retry" behavior. (ARCHITECTURE.md §3.2)
     public var isTerminalOK: Bool { self == .ok || self == .recovered }
