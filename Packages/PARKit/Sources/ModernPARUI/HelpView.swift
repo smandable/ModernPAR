@@ -27,6 +27,19 @@ public struct HelpView: View {
                     """)
 
                 section(
+                    "Folder access (the one-time prompt)",
+                    """
+                    ModernPAR is sandboxed, so macOS lets it read and write only the \
+                    folders you grant. The first time you open a set or archive in a \
+                    folder, a panel pre-selected to that folder asks you to grant access — \
+                    click Grant Access. The grant is remembered across launches, and \
+                    granting a parent folder (your download folder, say) covers everything \
+                    inside it. Full Disk Access and Finder permissions do not apply to a \
+                    sandboxed app. If a window says "Folder access needed", click Grant \
+                    Folder Access… in the window or in the File menu.
+                    """)
+
+                section(
                     "Extracting archives",
                     """
                     Extract RAR and zip archives with ⌘U, by dropping them, or automatically \
@@ -46,9 +59,10 @@ public struct HelpView: View {
                     bottom) whose file-name pattern matches a file in the set fires — one \
                     rule per set. Rules extract with the built-in Unrar/Unzip engines, open \
                     the matched file, or hand it to an application of your choice. Manage \
-                    rules in Settings ▸ Post-processing; the built-in Unrar rule is always \
-                    last and cannot be removed. Trigger rules manually with Operation ▸ \
-                    Apply Rule when automatic post-processing is off.
+                    rules in Settings ▸ Post-processing; the built-in Unrar rule (shown \
+                    with a lock) is part of the app — always last, never removable, and \
+                    never disabled. Trigger rules manually with Operation ▸ Apply Rule \
+                    when automatic post-processing is off.
                     """)
 
                 section(

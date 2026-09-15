@@ -4,6 +4,31 @@ All notable changes to ModernPAR are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project follows
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.1] — Unreleased
+
+Fixes for the sandbox folder-access flow, prompted by user reports on r/macapps: windows
+stuck on "Waiting to start" with no folder picker, and a lock icon read as "unrar disabled".
+
+### Fixed
+- The one-time folder-access panel is now shown even when "Run unattended" is on. The grant
+  is a one-time capability prompt (remembered across launches; a parent folder covers
+  everything inside it), not a per-run dialog, and suppressing it left unattended users with
+  a window that never started and a picker that never appeared.
+- A declined or missing folder grant no longer leaves the window saying "Waiting to start".
+  The status line now reads "Folder access needed", and a banner explains that Full Disk
+  Access does not apply to a sandboxed app, with a **Grant Folder Access…** button. The same
+  command is in the File menu.
+- Extracting an archive (⌘U, drop, or Finder open) now asks for the folder grant *before* the
+  destination panel, so two consecutive open panels no longer look like one dialog repeating.
+
+### Changed
+- The folder-access panel says why it is asking and that Full Disk Access does not apply, and
+  the "Run unattended" caption notes that this one-time panel is still shown.
+- The pinned "Built-in Unrar" rule now has a caption under the rule list explaining that the
+  lock means "part of the app, always runs last" rather than "disabled".
+- In-app Help has a "Folder access" section; the README has a matching FAQ.
+- Added SECURITY.md with private vulnerability reporting instructions.
+
 ## [1.0.0] — 2026-06-13
 
 ModernPAR 1.0 — the first stable release.
@@ -55,6 +80,7 @@ Swift 6 + SwiftUI, no Rosetta required.
   auto-updates; Acknowledgements view carrying the GPL-2.0, UnRAR, and Sparkle
   license texts.
 
+[1.0.1]: https://github.com/smandable/ModernPAR/releases/tag/v1.0.1
 [1.0.0]: https://github.com/smandable/ModernPAR/releases/tag/v1.0.0
 [0.1.2]: https://github.com/smandable/ModernPAR/releases/tag/v0.1.2
 [0.1.1]: https://github.com/smandable/ModernPAR/releases/tag/v0.1.1

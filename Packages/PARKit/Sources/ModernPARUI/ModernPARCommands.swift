@@ -7,6 +7,7 @@ public struct ModernPARCommands: Commands {
     @Environment(\.openWindow) private var openWindow
     @FocusedValue(\.activeSession) private var activeSession
     @FocusedValue(\.fileTableActions) private var fileTableActions
+    @FocusedValue(\.grantFolderAccessAction) private var grantFolderAccessAction
     private let model: AppModel
 
     public init(model: AppModel) {
@@ -48,6 +49,15 @@ public struct ModernPARCommands: Commands {
                 }
             }
             .keyboardShortcut("u")
+
+            Divider()
+
+            // Re-shows the one-time sandbox folder grant after a decline — the same action
+            // as the window's banner button, reachable when the banner is scrolled away.
+            Button("Grant Folder Access…") {
+                grantFolderAccessAction?.grant()
+            }
+            .disabled(grantFolderAccessAction == nil)
         }
 
         CommandMenu("Operation") {

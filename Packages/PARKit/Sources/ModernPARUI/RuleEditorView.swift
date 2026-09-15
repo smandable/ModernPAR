@@ -35,6 +35,18 @@ struct RuleEditorView: View {
             .frame(minHeight: 150)
             .border(.separator)
 
+            // The lock on the pinned row read as "locked out / disabled" to a first-time
+            // user (r/macapps report, 2026-07) — say what it means where it can be seen.
+            Label {
+                Text(
+                    "The built-in Unrar rule is part of ModernPAR: it always runs last, after your own rules, and cannot be edited or removed. It is not disabled."
+                )
+            } icon: {
+                Image(systemName: "lock.fill")
+            }
+            .font(.caption)
+            .foregroundStyle(.secondary)
+
             HStack(spacing: 8) {
                 Button("New Rule…") { sheet = .new }
                 Button("Modify…") {

@@ -560,3 +560,19 @@ Four layers, all runnable in CI on `macos-26` (`swift test` headless + `xcodebui
    - **Scale test:** synthesize a 32k-row set and assert the file list stays responsive (the trigger for the `NSTableView` fallback decision).
 
 **CI gating.** Layers 1–3 run on every PR (fast, headless). Layer 4 + sign/notarize run on tags. The cross-tool golden suite (layer 1) is a **required** check on any change touching `Par2Cxx`, the shim, or `EmbeddedEngine`.
+
+---
+
+## Post-1.0 maintenance
+
+> **v1.0.1 (2026-09-15) — sandbox folder-grant UX.** Prompted by an r/macapps thread
+> (July 2026) where two users sat on "Waiting to start" with no folder picker and read the
+> pinned rule's lock as "unrar disabled". Fixes: the grant panel is shown even under
+> unattended operation (it is a one-time capability prompt, not a per-run dialog); a
+> declined/missing grant surfaces as `DocStatus.folderAccessNeeded` with an in-window banner
+> and a File ▸ Grant Folder Access… command; archive opens stage the anchor
+> (`OperationSession.stageArchive`) and ask for the grant BEFORE the destination panel; panel,
+> rule-editor caption, Help, README FAQ and SECURITY.md explain the sandbox. Verified by
+> running the Debug app: cold-launch open of an ungranted `.rar` → grant panel → extraction.
+> Gotcha found while verifying: two Finder-opens arriving while the modal grant panel is up
+> leave BOTH windows declined — don't stress-test with back-to-back `open` calls.

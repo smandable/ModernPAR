@@ -15,6 +15,22 @@ struct Par1CreateTests {
     static let intelPar = URL(
         fileURLWithPath: "/Applications/MacPAR deLuxe.app/Contents/Helpers/par")
 
+    /// True when an x86_64 process can be spawned (Rosetta 2 installed).
+    static let rosettaAvailable: Bool = {
+        let probe = Process()
+        probe.executableURL = URL(fileURLWithPath: "/usr/bin/arch")
+        probe.arguments = ["-x86_64", "/usr/bin/true"]
+        probe.standardError = FileHandle.nullDevice
+        probe.standardOutput = FileHandle.nullDevice
+        do {
+            try probe.run()
+            probe.waitUntilExit()
+            return probe.terminationStatus == 0
+        } catch {
+            return false
+        }
+    }()
+
     /// Copies only the DATA files of a fixture set into a scratch folder.
     private func stageData(from subdir: String, names: [String]) throws -> URL {
         let scratch = FileManager.default.temporaryDirectory
@@ -86,7 +102,9 @@ struct Par1CreateTests {
 
     @Test func intelBinaryAcceptsOurSets() async throws {
         // Local-only: CI runners have no MacPAR deLuxe install (and no Rosetta guarantee).
-        guard FileManager.default.fileExists(atPath: Self.intelPar.path) else { return }
+        // Rosetta 2 may simply not be installed on the host — skip rather than fail there.
+        guard FileManager.default.fileExists(atPath: Self.intelPar.path), Self.rosettaAvailable
+        else { return }
         let names = ["one.dat", "two.dat", "three.dat"]
         let folder = try stageData(from: "five-files", names: names)
         defer { try? FileManager.default.removeItem(at: folder) }

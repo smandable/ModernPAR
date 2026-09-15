@@ -300,23 +300,18 @@ public final class OperationSession {
         }
     }
 
-    /// Opens a RAR archive and chains into extraction through the same one-time folder-grant
-    /// flow verify uses — extraction reads sibling volumes and writes output into the
-    /// archive's folder, so a single-file grant is not enough. (ROADMAP Phase 4)
-    public func openArchive(
-        _ url: URL,
-        using extractor: any ArchiveExtractor,
-        options: ExtractOptions = ExtractOptions(),
-        password: any PasswordProvider,
-        conflicts: any ConflictResolver
-    ) {
+    /// Makes `url` this window's archive WITHOUT starting anything: the UI can then check
+    /// `needsFolderGrant` and show the one-time folder grant BEFORE the extraction run is
+    /// configured (destination panel, prompts). Two back-to-back open panels — destination,
+    /// then grant — read as one dialog repeating, and cancelling the second silently killed
+    /// the run (r/macapps report, 2026-07). Follow with `requestExtract`.
+    public func stageArchive(_ url: URL) {
         cancel()
         reset()
         openedURL = url
         anchorURL = url
         anchorIsArchive = true
         log.append("Opened archive \(url.lastPathComponent).")
-        requestExtract(using: extractor, options: options, password: password, conflicts: conflicts)
     }
 
     /// The grant-aware extraction entry point (mirror of `requestVerify`).
@@ -516,16 +511,30 @@ public final class OperationSession {
         }
     }
 
-    /// The user declined the folder grant; stay open in parse-only mode.
+    /// The grant was obtained (or turned out to be held already) OUTSIDE the deferred-action
+    /// flow — the synchronous grant-first path for archives. Clears the consent state so the
+    /// banner, status line, and File-menu item stop claiming access is missing even if the
+    /// run that follows is cancelled at its destination panel. (v1.0.1 review)
+    public func folderGrantSatisfied() {
+        guard docStatus == .folderAccessNeeded else { return }
+        docStatus = .waitingToStart
+        log.append("Folder access granted.")
+    }
+
+    /// The user declined the folder grant; stay open in parse-only mode. The status line
+    /// says so (the log pane is hidden by default, and a window stuck on "Waiting to start"
+    /// with no explanation was the r/macapps report, 2026-07) — the UI reacts to
+    /// `.folderAccessNeeded` with a banner and a "Grant Folder Access…" button.
     public func folderGrantDeclined() {
         awaitingFolderGrant = false
         let wasExtract =
-            if case .extract = pendingGrantAction { true } else { false }
+            if case .extract = pendingGrantAction { true } else { anchorIsArchive }
         pendingGrantAction = nil
+        docStatus = .folderAccessNeeded
         log.append(
             wasExtract
-                ? "Folder access not granted — extraction needs access to the archive's folder to read all volumes and write the output."
-                : "Folder access not granted — verify would report every data file as missing. Use the Verify button after granting access, or open the enclosing folder."
+                ? "Folder access not granted — extraction needs access to the archive's folder to read all volumes and write the output. Click Grant Folder Access… to continue."
+                : "Folder access not granted — verify would report every data file as missing. Click Grant Folder Access… to continue, or open the enclosing folder."
         )
         // The declined grant ends this window's pipeline.
         runEnded += 1

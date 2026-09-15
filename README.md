@@ -75,10 +75,24 @@ ModernPAR.xcodeproj/  app project (links PARKit statically)
 docs/                 PRD, ARCHITECTURE, ROADMAP, SCAFFOLD, and research/ (00–08)
 ```
 
+## FAQ
+
+**Why does ModernPAR ask for access to a folder?** ModernPAR runs in the macOS App
+Sandbox, so it can read and write only the folders you hand it. Opening a single `.par2` or `.rar` grants that one file, but a set needs
+its whole folder to read the other volumes and write the repaired or extracted output. The
+first time you open something in a folder, a panel pre-selected to that folder asks you to
+grant access. The grant is remembered across launches, and granting a parent folder covers
+everything inside it. Full Disk Access and Finder permissions do not apply to a sandboxed
+app. If a window says "Folder access needed", click **Grant Folder Access…** in the window
+or in the File menu.
+
+**What is the lock on the "Built-in Unrar" rule?** It marks the rule as part of the app: it
+always runs last, after your own rules, and cannot be edited or removed. It is not disabled.
+
 ## Build & run
 
 ```bash
-# Unit tests (fast, headless — ~20s, 205 tests)
+# Unit tests (fast, headless — ~20s, 340+ tests)
 swift test --package-path Packages/PARKit
 
 # Build + run the app

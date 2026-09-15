@@ -4,6 +4,10 @@ import Foundation
 /// otherwise primary/red. Maps the original's `DocStatus0..16`. (ARCHITECTURE.md §3.2)
 public enum DocStatus: Sendable, Equatable {
     case waitingToStart  // DocStatus16
+    /// The sandbox folder grant was declined (or never shown): nothing can run until the
+    /// user grants access to the set's folder. A consent state, not a failure — the window
+    /// shows a banner with a "Grant Folder Access…" button. (r/macapps report, 2026-07)
+    case folderAccessNeeded
     /// The user cancelled the running operation (⌘., the Cancel button, or a dialog).
     case cancelled  // DocStatus3
     /// A create window with files staged but nothing written yet.

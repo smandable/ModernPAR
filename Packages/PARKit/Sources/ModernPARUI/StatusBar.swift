@@ -49,6 +49,7 @@ extension DocStatus {
     var label: String {
         switch self {
         case .waitingToStart: return "Waiting to start"
+        case .folderAccessNeeded: return "Folder access needed — click Grant Folder Access…"
         case .cancelled: return "Canceled."
         case .newParFileNeeded: return "New PAR file should be generated."
         case .checking: return "Verifying the files…"

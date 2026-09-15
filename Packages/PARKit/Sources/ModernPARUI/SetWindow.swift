@@ -55,6 +55,14 @@ public struct SetWindow: View {
                 ParOutputPane(lines: session.log)
             }
 
+            if session.docStatus == .folderAccessNeeded, !session.isBusy {
+                Divider()
+                FolderAccessBanner(
+                    folderName: session.anchorURL?.deletingLastPathComponent().lastPathComponent
+                        ?? "this folder",
+                    grant: grantFolderAccess)
+            }
+
             Divider()
             StatusBar(
                 docStatus: session.docStatus,
@@ -82,6 +90,11 @@ public struct SetWindow: View {
         }
         .navigationTitle(title)
         .focusedSceneValue(\.activeSession, session)
+        .focusedSceneValue(
+            \.grantFolderAccessAction,
+            session.docStatus == .folderAccessNeeded && !session.isBusy
+                ? GrantFolderAccessAction(grant: grantFolderAccess) : nil
+        )
         .focusedSceneValue(
             \.fileTableActions,
             FileTableActions(selectAllNonOK: {
@@ -292,13 +305,15 @@ public struct SetWindow: View {
         let isDirectory =
             (try? url.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == true
         if !isDirectory, let extractor = model.extractor(forArchiveAt: url) {
+            session.stageArchive(url)
+            guard ensureFolderGrant() else { return }  // declined: runEnded settles the queue
             guard let run = ExtractionRunSupport.makeRun(model: model) else {
                 // Cancelled destination panel: nothing will run — release the queue.
                 releaseQueueTicket()
                 return
             }
-            session.openArchive(
-                url, using: extractor, options: run.options,
+            session.requestExtract(
+                using: extractor, options: run.options,
                 password: run.password, conflicts: run.conflicts)
         } else {
             session.open(
@@ -310,6 +325,7 @@ public struct SetWindow: View {
     private func startExtraction(retryAfterFailure: Bool = false) {
         guard let anchor = session.anchorURL,
             let extractor = model.extractor(forArchiveAt: anchor),
+            ensureFolderGrant(),
             let run = ExtractionRunSupport.makeRun(
                 model: model, retryAfterFailure: retryAfterFailure)
         else { return }
@@ -384,6 +400,10 @@ public struct SetWindow: View {
                 releaseQueueTicket()
                 return
             }
+            session.stageArchive(url)
+            // The one-time folder grant comes BEFORE the destination panel — see
+            // `stageArchive`. A decline bumps runEnded, which settles the queue ticket.
+            guard ensureFolderGrant() else { return }
             guard let run = ExtractionRunSupport.makeRun(model: model) else {
                 // Cancelled destination panel: no run starts and no runEnded will ever
                 // arrive — the queue must be released here or every window behind this
@@ -392,8 +412,8 @@ public struct SetWindow: View {
                 releaseQueueTicket()
                 return
             }
-            session.openArchive(
-                url, using: extractor, options: run.options,
+            session.requestExtract(
+                using: extractor, options: run.options,
                 password: run.password, conflicts: run.conflicts)
         } else {
             session.open(url, thenVerifyUsing: model.par2Engine, autoRepair: autoRepair)
@@ -404,7 +424,7 @@ public struct SetWindow: View {
     /// folder while this prompt was queued) and verifies the chosen folder actually covers the
     /// set — persisting a wrong grant would re-prompt forever while verifies run doomed.
     private func presentFolderGrant() {
-        guard let anchor = session.anchorURL else {
+        guard session.anchorURL != nil else {
             session.folderGrantDeclined()
             return
         }
@@ -412,35 +432,75 @@ public struct SetWindow: View {
             session.folderGrantResolved(using: model.par2Engine)
             return
         }
-        // Unattended operation never shows dialogs (doc-01 §5.1): decline the grant and
-        // notify, like every other prompt. The guard sits AFTER the re-check so a grant
-        // remembered by another window still resolves silently. A declined grant leaves
-        // docStatus untouched, so the failure-notification path would not fire on its own.
-        if model.settings.unattendedOperation {
-            session.folderGrantDeclined()
-            ExtractionNotifier.shared.notifyFailure(
-                documentName: session.openedURL?.lastPathComponent ?? "this set",
-                status: "Folder access not granted — grant it once while attended.")
-            return
-        }
-        let setFolder = anchor.deletingLastPathComponent().standardizedFileURL
-        if let granted = FolderGrantPanel.present(suggestedFolder: setFolder) {
-            let grantedPath = granted.standardizedFileURL.path
-            let coversSet =
-                setFolder.path == grantedPath
-                || setFolder.path.hasPrefix(
-                    grantedPath.hasSuffix("/") ? grantedPath : grantedPath + "/")
-            guard coversSet else {
-                session.folderGrantDeclined()
-                session.reportOpenFailure(
-                    "The granted folder does not contain this set — choose \(setFolder.lastPathComponent) (or a parent folder) and try again."
-                )
-                return
-            }
-            FolderAccessStore.remember(granted)
+        if runGrantPanel() {
             session.folderGrantResolved(using: model.par2Engine)
         } else {
             session.folderGrantDeclined()
+        }
+    }
+
+    /// Synchronous grant-first check for archive opens: true when the session already has
+    /// (or just obtained) folder access; false after a decline, which the session has
+    /// already recorded (`.folderAccessNeeded`, runEnded bumped).
+    private func ensureFolderGrant() -> Bool {
+        guard session.needsFolderGrant else {
+            session.folderGrantSatisfied()
+            return true
+        }
+        if runGrantPanel() {
+            session.folderGrantSatisfied()
+            return true
+        }
+        session.folderGrantDeclined()
+        return false
+    }
+
+    /// Shows the folder-grant panel for the anchor's folder and persists an accepted grant.
+    /// Returns false when the user cancelled or picked a folder that does not cover the set.
+    ///
+    /// Shown even under unattended operation: the grant is a ONE-TIME capability prompt
+    /// (remembered across launches; a parent folder covers everything inside it), not a
+    /// per-run dialog, and no automation can proceed without it. Suppressing it left
+    /// unattended users staring at "Waiting to start" with a picker that never came
+    /// (r/macapps report, 2026-07). A decline under unattended mode is still surfaced as a
+    /// notification, since the window may not be in front.
+    private func runGrantPanel() -> Bool {
+        guard let anchor = session.anchorURL else { return false }
+        let setFolder = anchor.deletingLastPathComponent().standardizedFileURL
+        let granted = FolderGrantPanel.present(suggestedFolder: setFolder)
+        defer {
+            if granted == nil, model.settings.unattendedOperation {
+                ExtractionNotifier.shared.notifyFailure(
+                    documentName: session.openedURL?.lastPathComponent ?? "this set",
+                    status:
+                        "Folder access not granted — open the window and click Grant Folder Access…"
+                )
+            }
+        }
+        guard let granted else { return false }
+        let grantedPath = granted.standardizedFileURL.path
+        let coversSet =
+            setFolder.path == grantedPath
+            || setFolder.path.hasPrefix(
+                grantedPath.hasSuffix("/") ? grantedPath : grantedPath + "/")
+        guard coversSet else {
+            session.reportOpenFailure(
+                "The granted folder does not contain this set — choose \(setFolder.lastPathComponent) (or a parent folder) and try again."
+            )
+            return false
+        }
+        FolderAccessStore.remember(granted)
+        return true
+    }
+
+    /// The banner / File-menu action after a declined grant: re-run whatever the window
+    /// was about to do, which routes back through the grant flow.
+    private func grantFolderAccess() {
+        guard !session.isBusy, session.anchorURL != nil else { return }
+        if isArchiveSession {
+            startExtraction()
+        } else {
+            session.requestVerify(using: model.par2Engine, autoRepair: model.settings.autoRepair)
         }
     }
 
@@ -482,4 +542,46 @@ struct OpenFilesClaimant: View {
                 }
             }
     }
+}
+
+/// The in-window explanation after a declined (or never-shown) sandbox folder grant. Full
+/// Disk Access and Finder permissions do not apply to a sandboxed app — users tried both
+/// before giving up (r/macapps report, 2026-07). (doc-01 §5.1 status conventions)
+struct FolderAccessBanner: View {
+    let folderName: String
+    let grant: () -> Void
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 12) {
+            Image(systemName: "folder.badge.questionmark")
+                .font(.title3)
+                .foregroundStyle(.secondary)
+            VStack(alignment: .leading, spacing: 2) {
+                Text("ModernPAR needs one-time access to “\(folderName)”")
+                    .font(.callout.weight(.semibold))
+                Text(
+                    "macOS keeps ModernPAR sandboxed, so it can only read and write folders you grant it — Full Disk Access does not apply. Granting a parent folder covers everything inside it, and the grant is remembered."
+                )
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer()
+            Button("Grant Folder Access…", action: grant)
+                .keyboardShortcut(.defaultAction)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(.quaternary.opacity(0.5))
+    }
+}
+
+/// Lets File ▸ Grant Folder Access… reach the key window's banner action.
+public struct GrantFolderAccessAction {
+    public let grant: () -> Void
+    public init(grant: @escaping () -> Void) { self.grant = grant }
+}
+
+extension FocusedValues {
+    @Entry public var grantFolderAccessAction: GrantFolderAccessAction?
 }

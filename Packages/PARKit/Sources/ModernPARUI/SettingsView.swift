@@ -46,7 +46,7 @@ public struct SettingsView: View {
                 isOn: settings.autoCloseAfterPostProcess)
             Toggle("Run unattended", isOn: settings.unattendedOperation)
             Text(
-                "Unattended operation never shows dialogs: passwords are declined, name conflicts keep both items, and errors arrive as notifications."
+                "Unattended operation never shows per-run dialogs: passwords are declined, name conflicts keep both items, and errors arrive as notifications. The one-time folder-access panel is still shown — nothing can run without it."
             )
             .font(.caption)
             .foregroundStyle(.secondary)

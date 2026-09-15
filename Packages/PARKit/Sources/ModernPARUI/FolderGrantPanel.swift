@@ -15,7 +15,7 @@ public enum FolderGrantPanel {
         panel.allowsMultipleSelection = false
         panel.directoryURL = suggestedFolder
         panel.message =
-            "ModernPAR needs access to this folder to read the set's files and write its output (repaired files or extracted archives)."
+            "ModernPAR is sandboxed and needs one-time access to this folder to read the set and write its output. Full Disk Access does not apply; a parent folder covers everything inside it, and the grant is remembered."
         panel.prompt = "Grant Access"
         return panel.runModal() == .OK ? panel.url : nil
     }
