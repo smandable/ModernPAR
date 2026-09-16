@@ -350,4 +350,46 @@ struct EmptyFileCreateTests {
         let extras = EngineRunSupport.extraFiles(near: dir.appendingPathComponent("set.par2"))
         #expect(extras.map(\.lastPathComponent) == ["data.bin"])
     }
+
+    @Test func aSetWithAnEmptyMemberReadsCleanThroughTheAppEngine() async throws {
+        // The app's own create skips empty files, but a set that HAS one — made through the
+        // shim, or by another tool — must still read as clean end to end: the engine checks the
+        // empty member by whole-file hash, so the parser settles that row OK (not a blank
+        // status, and not damaged) and gives it no "Blocks needed" count.
+        let (dir, urls) = try makeFolder([
+            ("a.bin", 40960), ("b.bin", 20000), (Self.firstSortingEmptyName, 0),
+        ])
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let parFile = dir.appendingPathComponent("set.par2")
+        let created = EngineOutput()
+        try #require(
+            await shimCreate(parFile: parFile, files: urls, output: created) == PAR2SHIM_SUCCESS,
+            "\(created.lines.joined(separator: "\n"))")
+
+        let route = SessionRoute(
+            mode: .verifyRepair, folderBookmark: try? ScopedAccess.bookmark(for: dir),
+            anchorBookmark: try ScopedAccess.bookmark(for: parFile))
+        var events: [EngineEvent] = []
+        for await event in EmbeddedEngine(repairsAutomatically: false).run(route) {
+            events.append(event)
+        }
+
+        let set = try Par2Parser.loadSet(anchor: parFile)
+        let emptyID = try #require(
+            set.descriptions.values.first { $0.preferredName == Self.firstSortingEmptyName }?
+                .fileID.uuid)
+        var statuses: [UUID: FileStatus] = [:]
+        for case .fileStatusChanged(let id, let status) in events { statuses[id] = status }
+        #expect(statuses[emptyID] == .ok)
+        #expect(
+            !events.contains {
+                if case .fileBlocksNeeded(let id, _) = $0 { return id == emptyID }
+                return false
+            })
+        #expect(
+            events.contains {
+                if case .docStatusChanged(.allFilesOK) = $0 { return true }
+                return false
+            })
+    }
 }
