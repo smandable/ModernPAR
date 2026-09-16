@@ -70,6 +70,8 @@ extension DocStatus {
         case .onlyNonRecoverableMissingWithRenames:
             return "Only non-recoverable files are missing; one or more files were renamed."
         case .notValid: return "The PAR file is not valid."
+        case .unreliableChecksums:
+            return "This set records wrong checksums — make the set again."
         case .internalError: return "An internal error occurred during processing."
         case .extracting: return "Extracting files…"
         case .extractedSuccessfully: return "Extraction finished successfully."

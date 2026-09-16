@@ -21,6 +21,10 @@ public struct ParSet: Identifiable, Sendable {
     /// to the Trash after a successful restore. Empty for PAR1 until Phase 8 wires its
     /// verify path. (doc-01 §5.1; ROADMAP Phase 7)
     public let parFiles: [URL]
+    /// Non-nil when the parser recognized a PAR2 set carrying the empty-file checksum defect
+    /// ModernPAR 1.0.1 and earlier wrote. Such a set reports intact data as damaged, so no
+    /// operation may repair against it. Always nil for PAR1, which has no slice checksums.
+    public let emptyFileDefect: Par2EmptyFileDefect?
 
     public init(
         id: UUID = UUID(),
@@ -29,7 +33,8 @@ public struct ParSet: Identifiable, Sendable {
         sourceBlockCount: Int = 0,
         recoveryBlocksAvailable: Int = 0,
         files: [FileEntry] = [],
-        parFiles: [URL] = []
+        parFiles: [URL] = [],
+        emptyFileDefect: Par2EmptyFileDefect? = nil
     ) {
         self.id = id
         self.kind = kind
@@ -38,5 +43,6 @@ public struct ParSet: Identifiable, Sendable {
         self.recoveryBlocksAvailable = recoveryBlocksAvailable
         self.files = files
         self.parFiles = parFiles
+        self.emptyFileDefect = emptyFileDefect
     }
 }

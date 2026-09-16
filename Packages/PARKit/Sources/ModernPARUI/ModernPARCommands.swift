@@ -74,7 +74,9 @@ public struct ModernPARCommands: Commands {
                 activeSession?.requestVerify(using: model.par2Engine, autoRepair: true)
             }
             .keyboardShortcut("r")
-            .disabled(par2CommandsUnavailable)
+            // Repairing a set whose checksums are shifted overwrites intact files with
+            // shifted copies, so the command is unavailable for one. (`Par2EmptyFileDefect`)
+            .disabled(par2CommandsUnavailable || activeSession?.emptyFileDefect != nil)
 
             Button("Cancel Operation") {
                 activeSession?.cancel()

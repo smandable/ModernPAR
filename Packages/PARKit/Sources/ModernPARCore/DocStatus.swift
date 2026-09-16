@@ -30,6 +30,11 @@ public enum DocStatus: Sendable, Equatable {
     case onlyNonRecoverableMissing  // DocStatus13
     case onlyNonRecoverableMissingWithRenames  // DocStatus14
     case notValid  // DocStatus9
+    /// A readable, structurally valid PAR2 set whose stored checksums are shifted out of step
+    /// by an empty member — the defect ModernPAR 1.0.1 and earlier wrote. Verifying it reports
+    /// intact data as damaged and repairing against it overwrites that data, so the set is
+    /// opened read-only and the window says to make it again. (`Par2EmptyFileDefect`)
+    case unreliableChecksums
     case internalError  // DocStatus15
     // Archive extraction (ROADMAP Phase 4; the original's unrar progress-window states).
     case extracting
@@ -56,7 +61,7 @@ public enum DocStatus: Sendable, Equatable {
     public var isFailureEndState: Bool {
         switch self {
         case .notValid, .internalError, .extractionFailed, .createFailed, .needMoreRecovery,
-            .needMoreFiles, .cannotRestore:
+            .needMoreFiles, .cannotRestore, .unreliableChecksums:
             return true
         default:
             return false

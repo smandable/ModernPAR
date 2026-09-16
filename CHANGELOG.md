@@ -36,11 +36,14 @@ All notable changes to ModernPAR are documented here. The format follows
   damaged, and repairing it rewrote them with shifted data, keeping the originals as
   “name.1”. Empty files are now left out of new PAR2 sets, as par2cmdline does, and the
   build window marks them before you create.
-- If you made PAR2 sets with an earlier version from folders like these, turn off “Repair
-  automatically after verifying” (Settings ▸ Basic) before opening them. If one reports
-  damage you don't expect, delete that set's .par2 files and create the set again. If a
-  repair already ran, each “.1” file is your intact original: delete the rewritten file and
-  remove “.1” from the original's name.
+- PAR2 sets already made that way are now recognized when you open one, and ModernPAR no
+  longer repairs against them. The window says the set records wrong checksums, that your
+  files are most likely intact, and that the set should be made again; Repair is unavailable,
+  and an explicit Verify runs without repairing. Before, opening such a set repaired it
+  automatically — every time: it renamed each intact original to “name.1”, wrote a shifted
+  copy over the original, and ended “Repair Failed.”. Delete that set's .par2 files and make
+  the set again. If a repair already ran, each “.1” file is your intact original: delete the
+  rewritten file and remove “.1” from the original's name.
 - A file that changes size while a PAR2 set is being created, such as a download still in
   progress, now stops the create with a message. Before, the create finished with a set that
   could not verify or repair.

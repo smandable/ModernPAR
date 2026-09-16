@@ -63,6 +63,11 @@ public struct SetWindow: View {
                     grant: grantFolderAccess)
             }
 
+            if let defect = session.emptyFileDefect, !session.isBusy {
+                Divider()
+                UnreliableChecksumsBanner(defect: defect)
+            }
+
             Divider()
             StatusBar(
                 docStatus: session.docStatus,
@@ -217,7 +222,7 @@ public struct SetWindow: View {
                     }
                     .disabled(session.isBusy || session.anchorURL == nil)
                     .help("Extract the open archive")
-                } else if session.docStatus == .repairNeeded {
+                } else if session.docStatus == .repairNeeded, session.emptyFileDefect == nil {
                     Button {
                         session.requestVerify(using: model.par2Engine, autoRepair: true)
                     } label: {
@@ -226,15 +231,18 @@ public struct SetWindow: View {
                     .disabled(session.isBusy)
                     .help("Repair the damaged files using the available recovery data")
                 } else {
+                    // A set with the empty-file checksum defect gets a verify-only button:
+                    // its damage report is an artifact of its own checksums, so repairing
+                    // would overwrite intact files. (`Par2EmptyFileDefect`)
+                    let repairs = model.settings.autoRepair && session.emptyFileDefect == nil
                     Button {
-                        session.requestVerify(
-                            using: model.par2Engine, autoRepair: model.settings.autoRepair)
+                        session.requestVerify(using: model.par2Engine, autoRepair: repairs)
                     } label: {
                         Label("Verify", systemImage: "checkmark.shield")
                     }
                     .disabled(session.isBusy || session.anchorURL == nil)
                     .help(
-                        model.settings.autoRepair
+                        repairs
                             ? "Verify the open set (repairs automatically if damage is found)"
                             : "Verify the open set")
                 }
@@ -569,6 +577,37 @@ struct FolderAccessBanner: View {
             Spacer()
             Button("Grant Folder Access…", action: grant)
                 .keyboardShortcut(.defaultAction)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(.quaternary.opacity(0.5))
+    }
+}
+
+/// The in-window explanation for a set carrying the empty-file checksum defect: what is
+/// wrong, that the data is probably fine, and the only way out. No action button — the set
+/// cannot be salvaged, only made again. (`Par2EmptyFileDefect`; ROADMAP Phase 9 follow-up)
+struct UnreliableChecksumsBanner: View {
+    let defect: Par2EmptyFileDefect
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 12) {
+            Image(systemName: "exclamationmark.triangle")
+                .font(.title3)
+                .foregroundStyle(.secondary)
+            VStack(alignment: .leading, spacing: 2) {
+                Text("This recovery set records wrong checksums")
+                    .font(.callout.weight(.semibold))
+                Text(defect.explanation)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                Text(defect.detail)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer()
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)

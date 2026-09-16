@@ -18,6 +18,10 @@ public final class OperationSession {
     /// The parsed set powering the header line — produced by the native read-only parser the
     /// moment a set is opened, before any engine runs. (ARCHITECTURE.md §1.3)
     public private(set) var parSet: ParSet?
+    /// Non-nil when the open set was written by ModernPAR 1.0.1 or earlier with an empty
+    /// member, so its stored checksums are shifted. The window explains it and offers no
+    /// repair; `startVerify` refuses one whatever the caller asks for.
+    public var emptyFileDefect: Par2EmptyFileDefect? { parSet?.emptyFileDefect }
     /// Set when an auto-verify wants to run but engine I/O needs a folder grant the session
     /// doesn't have — the UI presents the one-time powerbox panel and calls
     /// `folderGrantResolved`/`folderGrantDeclined`. (ROADMAP Phase 3)
@@ -162,7 +166,13 @@ public final class OperationSession {
     /// windows; explicit "Verify" runs) — the engine then stops at the verdict.
     public func startVerify(using engine: any PAR2Engine, autoRepair: Bool = true) {
         guard let anchorURL else { return }
-        var route = SessionRoute(mode: .verifyRepair, autoRepair: autoRepair)
+        // Last line of defence for the empty-file checksum defect: every repair in the app
+        // funnels through here, so a flagged set can only ever be read. The UI hides Repair
+        // as well, but a stale toolbar, a menu shortcut, or a restored route must not slip
+        // past — this set's "damage" is an artifact of its own checksums.
+        let refusedRepair = autoRepair ? emptyFileDefect : nil
+        var route = SessionRoute(
+            mode: .verifyRepair, autoRepair: autoRepair && refusedRepair == nil)
         // Retry remembers this session's already-OK PAR1 files and skips re-hashing them —
         // collected BEFORE start() resets the rows. (ROADMAP Phase 8 exit criterion)
         if parSet?.kind == .par1 {
@@ -171,6 +181,12 @@ public final class OperationSession {
         }
         mintBookmarks(into: &route, anchor: anchorURL)
         start(route, engine: engine)
+        // After start(), which clears the log: the refusal has to survive into the run the
+        // user is watching, not be wiped by the run it downgraded.
+        if let refusedRepair {
+            log.append(refusedRepair.explanation)
+            log.append("Repair was not started: it would overwrite files that are intact.")
+        }
     }
 
     /// Mints the route's folder + anchor bookmarks. CRITICAL: the anchor bookmark is created
@@ -478,7 +494,9 @@ public final class OperationSession {
             self.docStatus = outcome.docStatus
             self.setBusy(false)
             // Both kinds auto-verify now — PAR1 runs through the native engine (Phase 8).
-            if let engine, outcome.parSet != nil {
+            // A set with the empty-file checksum defect is the one exception: it opens
+            // read-only, because its verdict would be wrong and auto-repair would act on it.
+            if let engine, outcome.parSet != nil, outcome.parSet?.emptyFileDefect == nil {
                 if self.needsFolderGrant {
                     // The UI presents the one-time "grant this folder" powerbox panel.
                     self.pendingGrantAction = .verify(autoRepair: autoRepair)
@@ -580,6 +598,14 @@ public final class OperationSession {
                     outcome.logLines.append(
                         "\(missing) file(s) in the recovery set have no surviving description — totals are a lower bound."
                     )
+                }
+                if let defect = parSet.emptyFileDefect {
+                    // Nothing may run against this set: verifying it would call intact files
+                    // damaged and repairing would overwrite them. (`Par2EmptyFileDefect`)
+                    outcome.docStatus = .unreliableChecksums
+                    outcome.logLines.append(defect.explanation)
+                    outcome.logLines.append(defect.detail)
+                    return outcome
                 }
             } else {
                 let archive = try Par1Parser.parse(fileURL: anchor)

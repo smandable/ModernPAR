@@ -208,7 +208,8 @@ extension ParSet {
             sourceBlockCount: set.sourceBlockCount,
             recoveryBlocksAvailable: set.recoveryBlockCount,
             files: entries,
-            parFiles: set.sourceFiles
+            parFiles: set.sourceFiles,
+            emptyFileDefect: set.emptyFileDefect
         )
     }
 }
