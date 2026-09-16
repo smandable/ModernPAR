@@ -269,11 +269,16 @@ struct EmptyFileDefectSessionTests {
         return out
     }
 
+    /// Generous on purpose: the tests below drive the REAL in-process engine, and every engine
+    /// operation in the process now queues on the Par2Shim mutex, so this run can sit behind
+    /// another suite's multi-hundred-megabyte create. A 15 s budget passed locally and failed
+    /// the v1.1.0 release on a 3 vCPU runner, where the same test took 85 s. A genuinely stuck
+    /// run still fails long before the CI step's 20-minute timeout.
     private func waitUntilIdle(_ session: OperationSession) async throws {
-        for _ in 0..<600 where session.isBusy {
+        for _ in 0..<9600 where session.isBusy {
             try await Task.sleep(for: .milliseconds(25))
         }
-        #expect(!session.isBusy)
+        #expect(!session.isBusy, "session still busy after 240 s")
     }
 
     /// Engine scripted to report exactly what the real one reports for this set: damage on
