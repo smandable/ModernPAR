@@ -565,6 +565,28 @@ Four layers, all runnable in CI on `macos-26` (`swift test` headless + `xcodebui
 
 ## Post-1.0 maintenance
 
+> **v1.1.0 (shipped 2026-09-15) — data-safety fixes + the "Blocks needed" column.** Worked by
+> four parallel sessions in separate worktrees and integrated by a dedicated merge session
+> (linear replay, then one adversarial review of the whole integrated diff).
+> - **PAR2 create with an empty file corrupted the set** (vendored turbo patch #6): a 0-byte
+>   member sorting before a non-empty one wrote past its 0-entry IFSC packet and shifted every
+>   later block and file hash. Any folder with a hidden `.localized` file or a custom icon hit
+>   it. Empty files are now skipped like par2cmdline does, a file that changes size mid-create
+>   fails the create, and a failed create no longer deletes an existing set of the same name.
+> - **Sets already written that way are recognized and opened read-only**
+>   (`Par2RecoverySet.emptyFileDefect` → `DocStatus.unreliableChecksums`): auto-repair used to
+>   rewrite every intact file with shifted data and end "Repair Failed." on every open.
+> - **Crafted/third-party `.par2` crash class** (vendored turbo patch #5): a file in the Main
+>   packet's NON-recovery set had unassigned block iterators, SIGSEGV'ing the in-process engine
+>   — plus a logic bug that reported success without repairing. Non-recovery files are now
+>   "not in set", excluded from the recovery verdict, and never renamed or recreated as a
+>   repair target. A Main packet that repeats a File ID is refused before the engine opens it.
+> - **Repair failed when the on-disk name differed only by case** or Unicode normalization: the
+>   file was passed back to the engine as an extra file, its good blocks counted twice.
+> - **The engine runs one operation per process at a time** (Par2Shim mutex) — turbo's lazy
+>   global init is not safe to share, and a poisoned process failed every later repair.
+> - 438 tests. Review findings not fixed here are queued for one vendored-patch pass.
+
 > **v1.0.1 (shipped 2026-09-15) — sandbox folder-grant UX.** Prompted by an r/macapps thread
 > (July 2026) where two users sat on "Waiting to start" with no folder picker and read the
 > pinned rule's lock as "unrar disabled". Fixes: the grant panel is shown even under

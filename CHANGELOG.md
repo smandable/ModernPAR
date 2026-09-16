@@ -4,7 +4,20 @@ All notable changes to ModernPAR are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project follows
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [1.1.0] — 2026-09-15
+
+Data-safety fixes and a new column. Two of these affect files you already have: sets created
+with an empty file in the list recorded wrong checksums, and opening one repaired against it
+automatically. If you made sets from a folder containing a hidden `.localized` file or a custom
+icon, see the second and third entries below.
+
+### Added
+- The file list's "Blocks needed" column now shows how many recovery blocks each damaged or
+  missing file needs; it always showed "—". PAR2 counts match par2cmdline's per-file report
+  ("Found 91 of 100 data blocks" means 9 needed), take into account blocks found in other files
+  (such as a partial copy under another name, or the backup an interrupted repair leaves
+  behind), and clear once the file is repaired. A damaged or missing PAR1 file needs one block,
+  since each PAR1 recovery volume restores one file.
 
 ### Fixed
 - Fixed a crash (and a related silent-non-repair) when verifying or repairing a PAR2 set that
@@ -19,12 +32,6 @@ All notable changes to ModernPAR are documented here. The format follows
   missing or unreadable, the status now reads "Only non-recoverable files are missing" instead
   of overstating "All files are correct", and the file's row stays "not in set" rather than
   showing a spinner that never resolves.
-- The file list's "Blocks needed" column now shows how many recovery blocks each damaged
-  or missing file needs; it always showed "—". PAR2 counts match par2cmdline's per-file report
-  ("Found 91 of 100 data blocks" means 9 needed), take into account blocks found in other files
-  (such as a partial copy under another name, or the backup an interrupted repair leaves
-  behind), and clear once the file is repaired. A damaged or missing PAR1 file needs one block,
-  since each PAR1 recovery volume restores one file.
 - A PAR2 data file that is still present but holds none of its original data (overwritten or
   zero-filled) is now shown as damaged and reported as repaired afterwards. Before, its row
   kept a blank status and showed plain "OK" after the repair.
@@ -130,6 +137,7 @@ Swift 6 + SwiftUI, no Rosetta required.
   auto-updates; Acknowledgements view carrying the GPL-2.0, UnRAR, and Sparkle
   license texts.
 
+[1.1.0]: https://github.com/smandable/ModernPAR/releases/tag/v1.1.0
 [1.0.1]: https://github.com/smandable/ModernPAR/releases/tag/v1.0.1
 [1.0.0]: https://github.com/smandable/ModernPAR/releases/tag/v1.0.0
 [0.1.2]: https://github.com/smandable/ModernPAR/releases/tag/v0.1.2
