@@ -93,7 +93,8 @@ public final class HelperProcessEngine: PAR2Engine, Sendable {
         process.arguments = ArgumentBuilder.verifyRepair(
             par2Path: anchor.path,
             repair: repairs,
-            extraFiles: EngineRunSupport.extraFiles(near: anchor).map(\.path),
+            extraFiles: EngineRunSupport.extraFiles(near: anchor, targetNames: roster.targetNames)
+                .map(\.path),
             threads: threads)
 
         let stdout = Pipe()

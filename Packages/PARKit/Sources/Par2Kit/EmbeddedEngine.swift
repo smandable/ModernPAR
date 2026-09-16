@@ -83,7 +83,8 @@ public final class EmbeddedEngine: PAR2Engine, Sendable {
                 nonRecoveryIDs: roster.nonRecoveryIDs, repairsAutomatically: repairs),
             continuation: continuation)
         let result = Self.shimRepair(
-            anchor: anchor, repair: repairs, threads: threads, token: token, bridge: bridge)
+            anchor: anchor, repair: repairs, threads: threads, token: token, bridge: bridge,
+            targetNames: roster.targetNames)
 
         EngineRunSupport.finish(
             code: Int32(result.rawValue),
@@ -93,11 +94,12 @@ public final class EmbeddedEngine: PAR2Engine, Sendable {
     }
 
     private static func shimRepair(
-        anchor: URL, repair: Bool, threads: UInt32, token: CancelToken, bridge: LineBridge
+        anchor: URL, repair: Bool, threads: UInt32, token: CancelToken, bridge: LineBridge,
+        targetNames: [String]
     ) -> Par2ShimResult {
         let bridgeContext = Unmanaged.passUnretained(bridge).toOpaque()
         let tokenContext = Unmanaged.passUnretained(token).toOpaque()
-        let extras = EngineRunSupport.extraFiles(near: anchor)
+        let extras = EngineRunSupport.extraFiles(near: anchor, targetNames: targetNames)
         var argv: [UnsafePointer<CChar>?] = extras.map { UnsafePointer(strdup($0.path)) }
         defer {
             for pointer in argv { free(UnsafeMutablePointer(mutating: pointer)) }

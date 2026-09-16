@@ -46,6 +46,10 @@ All notable changes to ModernPAR are documented here. The format follows
   could not verify or repair.
 - A PAR2 create that failed because a set with the same name already existed deleted that
   existing set. It is now left untouched.
+- Repairing a damaged file whose name on disk differs from the name in the `.par2` only by
+  capitalisation (or by how the name is stored in Unicode) now works. Before, the file was
+  scanned twice, its undamaged blocks were counted twice, and the repair failed after
+  promising it could succeed.
 
 ## [1.0.1] — 2026-09-15
 

@@ -47,6 +47,8 @@ enum EngineRunSupport {
         var fileIDsByName: [String: UUID] = [:]
         var blockCounts: [UUID: Int] = [:]
         var nonRecoveryIDs: Set<UUID> = []
+        /// The names the engine will open as target files, for `extraFiles(near:targetNames:)`.
+        var targetNames: [String] = []
         /// Set when the set is malformed in a way the in-process engine cannot survive; the
         /// caller must fail the run instead of starting the engine (see `rejectionReason`).
         var rejection: String? = nil
@@ -93,7 +95,8 @@ enum EngineRunSupport {
         return Roster(
             fileIDsByName: rosterNames(for: set), blockCounts: blockCounts(for: set),
             nonRecoveryIDs: Set(set.nonRecoveryFileIDs.map(\.uuid))
-                .subtracting(set.recoveryFileIDs.map(\.uuid)))
+                .subtracting(set.recoveryFileIDs.map(\.uuid)),
+            targetNames: targetNames(for: set))
     }
 
     /// Source blocks per recovery-set file. Non-recovery files are left out on purpose: no
@@ -130,20 +133,54 @@ enum EngineRunSupport {
     /// drops too: turbo's scan of an empty extra file returns without setting its match
     /// result (an uninitialized read that can dereference NULL), and an empty file holds no
     /// blocks to find. A file whose size can't be read is still passed.
-    static func extraFiles(near anchor: URL) -> [URL] {
-        let keys: Set<URLResourceKey> = [.isRegularFileKey, .fileSizeKey]
+    ///
+    /// `targetNames` are the names the engine will open as targets (`Roster.targetNames`). An
+    /// entry that is the SAME FILE as one of them is dropped: the engine removes a target from
+    /// the extras only on an exact path match, so on a case-insensitive volume a file whose
+    /// on-disk spelling differs from the set's — `movie.part01.rar` for `Movie.part01.rar`, or
+    /// a different Unicode normalization — is scanned twice. Its blocks are then counted twice
+    /// ("You have 20 out of 20 data blocks available" with 5 of 10 damaged), the engine calls
+    /// the repair possible, and the repair FAILS (engine code 5). Reproduced with the vendored
+    /// CLI; dropping the duplicate restores the honest count and the repair succeeds.
+    ///
+    /// Identity, not spelling, is the test: on a case-SENSITIVE volume those are two different
+    /// files and the second one is a real extra file worth scanning. Volumes that do not report
+    /// a file identifier simply keep the old behavior.
+    static func extraFiles(near anchor: URL, targetNames: [String] = []) -> [URL] {
+        let keys: Set<URLResourceKey> = [
+            .isRegularFileKey, .fileSizeKey, .fileResourceIdentifierKey,
+        ]
+        let folder = anchor.deletingLastPathComponent()
         guard
             let entries = try? FileManager.default.contentsOfDirectory(
-                at: anchor.deletingLastPathComponent(),
-                includingPropertiesForKeys: Array(keys))
+                at: folder, includingPropertiesForKeys: Array(keys))
         else { return [] }
+        let targetIDs: [any NSObjectProtocol] = targetNames.compactMap { name in
+            try? folder.appendingPathComponent(name)
+                .resourceValues(forKeys: [.fileResourceIdentifierKey]).fileResourceIdentifier
+        }
         return entries.filter { url in
             guard let values = try? url.resourceValues(forKeys: keys),
                 values.isRegularFile == true, values.fileSize != 0
             else { return false }
+            if let id = values.fileResourceIdentifier,
+                targetIDs.contains(where: { $0.isEqual(id) })
+            {
+                return false
+            }
             let ext = url.pathExtension.lowercased()
             return ext != "par2" && ext != "par"
         }.sorted { $0.lastPathComponent < $1.lastPathComponent }
+    }
+
+    /// The names the engine opens as target files: each described file's Description-packet
+    /// (ASCII-field) name after the par2→local translation. Deliberately NOT the Unicode
+    /// display names — a file sitting at a display name is a different file to the engine, and
+    /// its blocks are real credit.
+    static func targetNames(for set: Par2RecoverySet) -> [String] {
+        (set.recoveryFileIDs + set.nonRecoveryFileIDs).compactMap { id in
+            set.descriptions[id].map { engineDisplayName(for: $0.asciiName) }
+        }
     }
 
     /// Builds the roster map keyed by the names the ENGINE will print: the Description-packet
