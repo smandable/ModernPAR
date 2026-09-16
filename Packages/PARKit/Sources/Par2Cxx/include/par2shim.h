@@ -7,10 +7,13 @@
  *   - Blocking calls; run them on a background thread. Callbacks arrive on engine worker
  *     threads and must be thread-safe.
  *   - One engine operation per process at a time: a repair/create call made while another
- *     is running waits until that one has returned (turbo's lazily-initialized global state
- *     is not safe to share between concurrent operations). A waiting call does not poll
- *     `should_cancel` until it starts. Never call into the shim from one of its callbacks —
- *     that call would wait on its own operation forever.
+ *     is running waits until that one's ENGINE WORK has unwound (turbo's lazily-initialized
+ *     global state is not safe to share between concurrent operations). Two details the lock
+ *     does not cover: the failing call's last error-line callback runs after the lock is
+ *     released, so it can overlap the next operation's early callbacks, and waiters are not
+ *     served in FIFO order. A waiting call does not poll `should_cancel` until it starts.
+ *     Never call into the shim from one of its callbacks — that call would wait on its own
+ *     operation forever.
  *   - Cancellation is cooperative: `should_cancel` is polled every time the engine flushes
  *     a line or a progress update — typically sub-second, but bounded by one backend chunk
  *     computation and one chunk's recovered-data write during repair (those stretches print

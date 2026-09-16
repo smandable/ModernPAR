@@ -73,6 +73,11 @@ public final class HelperProcessEngine: PAR2Engine, Sendable {
         }
 
         let roster = EngineRunSupport.paintRoster(anchor: anchor, continuation: continuation)
+        if let rejection = roster.rejection {
+            // Out of process the crash is survivable, but the verdict would still be wrong.
+            continuation.yield(.finished(.failure(.launchFailed(rejection))))
+            return
+        }
         continuation.yield(.docStatusChanged(.checking))
         EngineRunSupport.warnIfFolderUnreadable(
             route: route, anchor: anchor, continuation: continuation)

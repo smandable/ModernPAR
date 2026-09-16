@@ -164,16 +164,21 @@ struct TurboOutputParserTests {
         #expect(docStatuses(in: all).last == .repairNeeded)
     }
 
-    @Test func swappedTargetsBothReportRenamed() {
-        // A full swap prints ONE Target-variant match line but renames both files.
+    @Test func aOneWayRenameRepairsTheHolderAndRenamesTheTarget() {
+        // Verbatim from the vendored engine for `cp b.bin a.bin; rm b.bin` (one line per
+        // holder — a true swap prints two, see aRealSwapLeavesBothRowsRenamedAndUncounted).
+        // b.bin is satisfied by renaming a.bin's file; a.bin's OWN data is gone, so the
+        // engine counts its blocks as missing and the repair rebuilds it.
         let all = events([
+            ("Target: \"b.bin\" - missing.", false),
             ("Target: \"a.bin\" - is a match for \"b.bin\".", false),
             ("Repair is required.", false),
-            ("2 file(s) have the wrong name.", false),
+            ("1 file(s) have the wrong name.", false),
+            ("You have 5 out of 10 data blocks available.", false),
             ("Repair is possible.", false),
             ("Repair complete.", false),
         ])
-        #expect(statuses(in: all)[idA]?.last == .renamed(from: "b.bin"))
+        #expect(statuses(in: all)[idA]?.last == .recovered)
         #expect(statuses(in: all)[idB]?.last == .renamed(from: "a.bin"))
         #expect(docStatuses(in: all).last == .restoredWithRenames)
     }
@@ -302,7 +307,9 @@ struct TurboOutputParserTests {
     @Test func blocksCountedTwiceReconcileToTheEnginesShortfall() {
         // An interrupted repair, verbatim (review repro, 2026-09-15): the partly rewritten
         // target holds 177 blocks, its `.1` backup 1436, and the engine counts the overlap in
-        // both. The sum would clamp to "—"; the engine's shortfall pins the one ambiguous file.
+        // both. Summing them would clamp the count to "—"; taking the best single source gives
+        // the right answer here on its own. For a case where the engine's shortfall actually
+        // MOVES an estimate, see reconciliationMovesAnEstimateToTheEnginesShortfall.
         let interrupted = events(
             [
                 ("Target: \"a.bin\" - damaged. Found 177 of 1536 data blocks.", false),
@@ -466,7 +473,10 @@ struct TurboOutputParserTests {
     }
 
     @Test func filesWithoutABlockCountGetNone() {
-        // Non-recovery files are left out of blockCounts: no recovery block rebuilds them.
+        // A file the native parse could not size (no description packet) has no entry in
+        // blockCounts, so it settles with a status but never with a count. Non-recovery files
+        // are also absent from blockCounts, but they never even reach settling — see
+        // nonRecoveryFileGetsNoStatusOrCountFromTheBlocksNeededPaths.
         let all = events(
             [
                 ("Target: \"a.bin\" - damaged. Found 9 of 10 data blocks.", false),
@@ -537,6 +547,16 @@ struct TurboOutputParserTests {
         #expect(EngineRunSupport.engineDisplayName(for: "back\\slash.bin") == "back/slash.bin")
         #expect(EngineRunSupport.engineDisplayName(for: "ctl\u{01}x.bin") == "ctl%01x.bin")
         #expect(EngineRunSupport.engineDisplayName(for: "naïve-ü.bin") == "naïve-ü.bin")
+        // The engine's two path guards (descriptionpacket.cpp, the non-Windows tail): a
+        // LEADING slash and every "../" are url-encoded, so the name it prints — and the row
+        // key that has to match it — is not just the per-byte translation.
+        #expect(EngineRunSupport.engineDisplayName(for: "/data.bin") == "%2Fdata.bin")
+        #expect(EngineRunSupport.engineDisplayName(for: "a/../b.bin") == "a/%2E%2E/b.bin")
+        #expect(EngineRunSupport.engineDisplayName(for: "../x.bin") == "%2E%2E/x.bin")
+        #expect(EngineRunSupport.engineDisplayName(for: "/../x.bin") == "%2F%2E%2E/x.bin")
+        #expect(EngineRunSupport.engineDisplayName(for: "../../x") == "%2E%2E/%2E%2E/x")
+        #expect(EngineRunSupport.engineDisplayName(for: "..bin") == "..bin")  // no slash: kept
+        #expect(EngineRunSupport.engineDisplayName(for: "sub/dir.bin") == "sub/dir.bin")
     }
 
     // MARK: - Non-recovery ("other") files (Main packet non-recovery set)
@@ -544,9 +564,14 @@ struct TurboOutputParserTests {
     private let idOther = UUID()
 
     /// Parser configured with `a.bin`/`b.bin` recoverable and `readme.txt` non-recovery.
-    private func eventsWithOther(_ lines: [(String, Bool)], repairs: Bool = true) -> [EngineEvent] {
+    /// `counts` are the recovery-set block counts, so the non-recovery rule can be exercised
+    /// against the blocks-needed machinery it has to stay out of (the merge resolution).
+    private func eventsWithOther(
+        _ lines: [(String, Bool)], counts: [UUID: Int] = [:], repairs: Bool = true
+    ) -> [EngineEvent] {
         var parser = TurboOutputParser(
             fileIDsByName: ["a.bin": idA, "b.bin": idB, "readme.txt": idOther],
+            blockCounts: counts,
             nonRecoveryIDs: [idOther],
             repairsAutomatically: repairs)
         return lines.flatMap { parser.consume($0.0, isError: $0.1) }
@@ -589,5 +614,173 @@ struct TurboOutputParserTests {
         // No recoverable row is dragged into a damaged/missing state by the "other" file.
         #expect(statuses(in: all)[idA]?.last == .ok)
         #expect(statuses(in: all)[idB]?.last == .ok)
+    }
+
+    // MARK: - Non-recovery files meeting the blocks-needed paths (the merge resolution)
+
+    @Test func nonRecoveryHolderCreditsTheTargetAndKeepsItsOwnRowNotInSet() {
+        // Verbatim engine shape: the non-recovery file holds two of a.bin's five blocks, so
+        // the engine has all five and asks for nothing. The holder line must credit a.bin
+        // (the count is 0, not 2) while the holder's own row stays out of the recovery model.
+        let all = eventsWithOther(
+            [
+                (
+                    "Target: \"readme.txt\" - damaged. Found 2 of 5 data blocks from \"a.bin\".",
+                    false
+                ),
+                ("Target: \"a.bin\" - damaged. Found 3 of 5 data blocks.", false),
+                ("You have 5 out of 5 data blocks available.", false),
+                ("Repair is possible.", false),
+            ], counts: [idA: 5])
+        #expect(blocksNeeded(in: all) == [idA: 0])
+        #expect(statuses(in: all)[idOther] == [.notInSet])
+        #expect(statuses(in: all)[idA]?.last == .recoverableCorrupt)
+    }
+
+    @Test func nonRecoveryFileGetsNoStatusOrCountFromTheBlocksNeededPaths() {
+        // Each blocks-needed line shape that can name a roster file, aimed at the non-recovery
+        // row: own-blocks, several-target-files, no-data. None may settle it or count it.
+        let all = eventsWithOther(
+            [
+                ("Target: \"readme.txt\" - damaged. Found 1 of 4 data blocks.", false),
+                (
+                    "Target: \"readme.txt\" - damaged, found 2 data blocks from several target files.",
+                    false
+                ),
+                ("File: \"readme.txt\" - no data found.", false),
+                ("Target: \"a.bin\" - damaged. Found 4 of 5 data blocks.", false),
+                ("You have 4 out of 5 data blocks available.", false),
+                ("Repair is not possible.", false),
+            ], counts: [idA: 5, idOther: 4])
+        #expect(blocksNeeded(in: all) == [idA: 1])
+        let otherTrail = statuses(in: all)[idOther] ?? []
+        #expect(!otherTrail.isEmpty && otherTrail.allSatisfy { $0 == .notInSet })
+        #expect(statuses(in: all)[idA]?.last == .unrecoverableCorrupt)
+    }
+
+    @Test func nonRecoveryRowStaysNotInSetWhenItHoldsAnotherTargetsWholeFile() {
+        // `cp data.bin readme.txt; rm data.bin` on the non-recovery fixture: the engine prints
+        // the rename line naming the non-recovery file as the holder. A repair never renames
+        // data into a non-recovery name, so its row must not become "renamed"/"possible error".
+        let all = eventsWithOther(
+            [
+                ("Target: \"a.bin\" - missing.", false),
+                ("Target: \"readme.txt\" - is a match for \"a.bin\".", false),
+                ("Repair is possible.", false),
+            ], counts: [idA: 5], repairs: false)
+        let holderTrail = statuses(in: all)[idOther] ?? []
+        #expect(!holderTrail.isEmpty && holderTrail.allSatisfy { $0 == .notInSet })
+        #expect(statuses(in: all)[idA]?.last == .possibleError)  // rename-satisfied, verify-only
+    }
+
+    @Test func presentOnlyUnderAnotherNameIsNotAPresentNonRecoveryFile() {
+        // The whole-file match is for an extra file carrying the non-recovery file's data, not
+        // for the file itself: the set is still missing it, so the verdict must say so.
+        let all = eventsWithOther([
+            ("Target: \"a.bin\" - found.", false),
+            ("Target: \"b.bin\" - found.", false),
+            ("/tmp/set/stray copy.txt is a perfect match for readme.txt", false),
+            ("All files are correct, repair is not required.", false),
+        ])
+        #expect(docStatuses(in: all) == [.onlyNonRecoverableMissing])
+        #expect(statuses(in: all)[idOther] == [.notInSet])
+    }
+
+    // MARK: - Hostile perfect-match lines
+
+    @Test func perfectMatchTakesTheLeftmostRosterNameSoAHostileNameCannotClearATarget() {
+        // A present file whose own name ends in "… is a perfect match for a.bin" makes the
+        // engine print a line with two valid-looking splits. The rightmost names a.bin and
+        // would clear its damage; the leftmost names the file the engine was talking about.
+        let hostile = "evil is a perfect match for a.bin"
+        let idHostile = UUID()
+        var parser = TurboOutputParser(
+            fileIDsByName: ["a.bin": idA, hostile: idHostile],
+            nonRecoveryIDs: [idHostile], repairsAutomatically: true)
+        let all = [
+            "Target: \"a.bin\" - missing.",
+            "/tmp/set/\(hostile) is a perfect match for \(hostile)",
+            "Repair is possible.",
+        ].flatMap { parser.consume($0, isError: false) }
+        #expect(statuses(in: all)[idA]?.last == .recoverableMissing)  // NOT cleared
+        #expect(statuses(in: all)[idHostile] == [.notInSet])
+    }
+
+    @Test func aCraftedPerfectMatchLineCostsBoundedWork() {
+        // The engine allows a 100 KB description name and prints it verbatim on its callback
+        // thread. A name built from repeated delimiter fragments used to cost quadratic work
+        // (tens of seconds for one line, with the event stream stalled behind it).
+        let fragment = " is a perfect match for \u{01}\u{01}"
+        let crafted = String(repeating: fragment, count: 2000)  // ~52 KB, ~2000 splits
+        for roster in [["a.bin": idA], ["a.bin": idA, crafted: idB]] {
+            var parser = TurboOutputParser(fileIDsByName: roster, repairsAutomatically: false)
+            let started = ContinuousClock.now
+            let events = parser.consume("/tmp/set/x\(crafted)", isError: false)
+            // Generous for a shared CI runner: the point is that it is not quadratic. The
+            // unbounded version took 30 s (release) to 65 s (debug) on a line this shape.
+            #expect(started.duration(to: .now) < .seconds(5))
+            #expect(events.count == 1)  // the log line only: no status, no crash
+        }
+    }
+
+    // MARK: - Rename lines where the holder's own data is gone
+
+    @Test func swapHolderKeepsItsOwnShortfallAndCount() {
+        // `cp b.bin a.bin; rm b.bin`: a.bin holds b.bin's content, so b.bin is rename-satisfied
+        // while a.bin's OWN data is gone. The engine prints one line per holder, so a.bin is
+        // only named here — it still needs its own five blocks.
+        let all = events(
+            [
+                ("Target: \"b.bin\" - missing.", false),
+                ("Target: \"a.bin\" - is a match for \"b.bin\".", false),
+                ("You have 5 out of 10 data blocks available.", false),
+                ("Repair is possible.", false),
+            ], counts: [idA: 5, idB: 5])
+        #expect(blocksNeeded(in: all) == [idA: 5])
+        #expect(statuses(in: all)[idA]?.last == .recoverableCorrupt)
+        #expect(statuses(in: all)[idB]?.last == .renamed(from: "a.bin"))
+    }
+
+    @Test func aRealSwapLeavesBothRowsRenamedAndUncounted() {
+        // A true swap prints a line for each holder, so each row is rename-satisfied by the
+        // other's line whichever order they arrive in.
+        let all = events(
+            [
+                ("Target: \"a.bin\" - is a match for \"b.bin\".", false),
+                ("Target: \"b.bin\" - is a match for \"a.bin\".", false),
+                ("Repair is possible.", false),
+            ], counts: [idA: 5, idB: 5])
+        #expect(blocksNeeded(in: all).isEmpty)
+        #expect(statuses(in: all)[idA]?.last == .renamed(from: "b.bin"))
+        #expect(statuses(in: all)[idB]?.last == .renamed(from: "a.bin"))
+    }
+
+    // MARK: - Credits and reconciliation
+
+    @Test func aHolderUnderTheTargetsOtherSpellingStillCredits() {
+        // The roster maps both the ASCII-field name and the Unicode name to one row. A file on
+        // disk under the Unicode name is a different file from the engine's target, so its
+        // blocks are real credit — the double-count guard must not swallow them.
+        let all = events(
+            [
+                ("Target: \"__.bin\" - missing.", false),
+                ("File: \"映画.bin\" - found 90 of 100 data blocks from \"__.bin\".", false),
+                ("You have 90 out of 100 data blocks available.", false),
+                ("Repair is possible.", false),
+            ], map: ["__.bin": idA, "映画.bin": idA, "b.bin": idB], counts: [idA: 100])
+        #expect(blocksNeeded(in: all) == [idA: 10])
+    }
+
+    @Test func reconciliationMovesAnEstimateToTheEnginesShortfall() {
+        // A disjoint partial copy: the best single source leaves 40, the two sources together
+        // leave 10, and the engine's own total says 10. Without reconciliation this reads 40.
+        let all = events(
+            [
+                ("Target: \"a.bin\" - damaged. Found 60 of 100 data blocks.", false),
+                ("File: \"copy.bin\" - found 30 of 100 data blocks from \"a.bin\".", false),
+                ("You have 90 out of 100 data blocks available.", false),
+                ("Repair is possible.", false),
+            ], counts: [idA: 100])
+        #expect(blocksNeeded(in: all) == [idA: 10])
     }
 }

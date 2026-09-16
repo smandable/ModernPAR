@@ -304,7 +304,7 @@ public struct FileEntry: Identifiable, Equatable, Sendable {
     public var name: String
     public var sizeBytes: UInt64
     public var status: FileStatus
-    public var blocksNeeded: Int     // for the "need N more blocks" report
+    public var blocksNeeded: Int     // recovery blocks this damaged/missing file needs ("Blocks needed" column)
 }
 ```
 

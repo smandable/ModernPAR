@@ -47,6 +47,27 @@ enum EngineRunSupport {
         var fileIDsByName: [String: UUID] = [:]
         var blockCounts: [UUID: Int] = [:]
         var nonRecoveryIDs: Set<UUID> = []
+        /// Set when the set is malformed in a way the in-process engine cannot survive; the
+        /// caller must fail the run instead of starting the engine (see `rejectionReason`).
+        var rejection: String? = nil
+    }
+
+    /// Why the engine must not be handed this set, if it must not be.
+    ///
+    /// A Main packet that lists one File ID twice — or lists it as both recoverable and
+    /// non-recovery — makes the vendored engine put ONE source-file object at two indices.
+    /// It then counts that file's blocks twice, scans its path on two file threads, and in a
+    /// repair walks past the end of its block vectors: a reported SIGSEGV, in-process, which
+    /// takes the whole app down, after the repair has already rewritten user files. The native
+    /// parser tolerates repeats (`ParSet` keeps the first row), so the roster is the last place
+    /// that can refuse the set before the engine opens it.
+    static func rejectionReason(for set: Par2RecoverySet) -> String? {
+        var seen: Set<MD5Digest> = []
+        for id in set.recoveryFileIDs + set.nonRecoveryFileIDs where !seen.insert(id).inserted {
+            return
+                "this .par2 is malformed: its main packet lists the same file ID more than once"
+        }
+        return nil
     }
 
     /// The native parser is the model; the engine is the actuator. Paints the roster so the UI
@@ -62,9 +83,17 @@ enum EngineRunSupport {
         let parSet = ParSet(par2: set)
         continuation.yield(.scanningStarted(totalFiles: parSet.files.count))
         continuation.yield(.filesDiscovered(parSet.files))
+        if let reason = rejectionReason(for: set) {
+            continuation.yield(.logLine("[err] \(reason)"))
+            return Roster(rejection: reason)
+        }
+        // A File ID in BOTH lists is refused above; subtracting keeps a stray one from making
+        // every line about a real set member "not in set" (the engine treats it as recoverable,
+        // since the Main packet stores the recoverable IDs first).
         return Roster(
             fileIDsByName: rosterNames(for: set), blockCounts: blockCounts(for: set),
-            nonRecoveryIDs: Set(set.nonRecoveryFileIDs.map(\.uuid)))
+            nonRecoveryIDs: Set(set.nonRecoveryFileIDs.map(\.uuid))
+                .subtracting(set.recoveryFileIDs.map(\.uuid)))
     }
 
     /// Source blocks per recovery-set file. Non-recovery files are left out on purpose: no
@@ -141,22 +170,47 @@ enum EngineRunSupport {
     }
 
     /// Mirrors `DescriptionPacket::TranslateFilenameFromPar2ToLocal` for macOS at nlNormal:
-    /// '\' → '/', bytes < 32 → "%XX" (uppercase hex), everything else unchanged.
+    /// '\' → '/', bytes < 32 → "%XX" (uppercase hex), then the engine's two path guards — a
+    /// LEADING '/' becomes "%2F" and every "../" becomes "%2E%2E/" (descriptionpacket.cpp, the
+    /// non-_WIN32 tail). Without the guards the roster key for such a file never matches the
+    /// name the engine prints, so its row gets no status and no blocks-needed count, and a
+    /// repair that restores it reports nothing repaired.
     static func engineDisplayName(for asciiName: String) -> String {
+        let hexDigits = Array("0123456789ABCDEF".utf8)
         var bytes: [UInt8] = []
         bytes.reserveCapacity(asciiName.utf8.count)
         for byte in asciiName.utf8 {
             if byte < 32 {
                 bytes.append(UInt8(ascii: "%"))
-                let hex = String(format: "%02X", byte)
-                bytes.append(contentsOf: Array(hex.utf8))
+                bytes.append(hexDigits[Int(byte >> 4)])
+                bytes.append(hexDigits[Int(byte & 0x0F)])
             } else if byte == UInt8(ascii: "\\") {
                 bytes.append(UInt8(ascii: "/"))
             } else {
                 bytes.append(byte)
             }
         }
-        return String(decoding: bytes, as: UTF8.self)
+        if bytes.first == UInt8(ascii: "/") {
+            bytes.replaceSubrange(0..<1, with: Array("%2F".utf8))
+        }
+        // The engine rewrites the ".." of every "../", left to right, leaving the slash.
+        let dot = UInt8(ascii: ".")
+        let slash = UInt8(ascii: "/")
+        var guarded: [UInt8] = []
+        guarded.reserveCapacity(bytes.count)
+        var index = 0
+        while index < bytes.count {
+            if bytes[index] == dot, index + 2 < bytes.count, bytes[index + 1] == dot,
+                bytes[index + 2] == slash
+            {
+                guarded.append(contentsOf: Array("%2E%2E".utf8))
+                index += 2
+            } else {
+                guarded.append(bytes[index])
+                index += 1
+            }
+        }
+        return String(decoding: guarded, as: UTF8.self)
     }
 
     /// Maps the engine result (libpar2 `Result` — identical numeric values for the shim enum

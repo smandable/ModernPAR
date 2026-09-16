@@ -13,7 +13,8 @@ All notable changes to ModernPAR are documented here. The format follows
   whole app on any such file with content, and a set whose only intact recoverable member was
   reported alongside an intact non-recovery file could be declared repaired without actually
   repairing a damaged file. Non-recovery files are now handled correctly: shown as "not in
-  set", never counted toward the recovery verdict, and never touched by a repair.
+  set", never counted toward the recovery verdict, and never renamed or recreated as a repair
+  target.
 - When the recovery set is intact but a non-recovery ("other") file listed in the set is
   missing or unreadable, the status now reads "Only non-recoverable files are missing" instead
   of overstating "All files are correct", and the file's row stays "not in set" rather than

@@ -24,9 +24,17 @@ public struct TurboOutputParser {
     /// stay "not in set" whatever the engine says about them; if one is absent or unreadable the
     /// terminal verdict is `.onlyNonRecoverableMissing`, not `.allFilesOK`.
     private let nonRecoveryIDs: Set<UUID>
-    /// Non-recovery files the engine confirmed present-and-matching (a whole-file "perfect
-    /// match"). Any non-recovery row NOT in here by verdict time is missing or unreadable.
+    /// Non-recovery files the engine confirmed present-and-matching under their own name (a
+    /// whole-file "perfect match"). Any non-recovery row NOT in here by verdict time is
+    /// missing, unreadable, or only present as data under some other name.
     private var nonRecoveryPresent: Set<UUID> = []
+    /// Longest roster key in UTF-8 bytes, which bounds the perfect-match line split: the
+    /// engine's par2-to-local translation never shortens a name, so a longer candidate cannot
+    /// name a roster file and is skipped without decoding it.
+    private let maxRosterKeyBytes: Int
+    /// How many ambiguous splits of one perfect-match line are decoded before giving up. An
+    /// honest line has exactly one; the cap keeps a crafted name from costing quadratic work.
+    private static let maxDecodedSplits = 8
     /// Whether this run repairs after verify — "Repair is required." means "now repairing"
     /// only then; in verify-only runs the engine prints it but stops after the verdict.
     private let repairsAutomatically: Bool
@@ -75,6 +83,7 @@ public struct TurboOutputParser {
         self.blockCounts = blockCounts
         self.nonRecoveryIDs = nonRecoveryIDs
         self.repairsAutomatically = repairsAutomatically
+        self.maxRosterKeyBytes = fileIDsByName.keys.lazy.map { $0.utf8.count }.max() ?? 0
     }
 
     /// Feed one engine output line; returns the events it implies (often just `.logLine`).
@@ -91,19 +100,24 @@ public struct TurboOutputParser {
         // Checked before the generic Target-line match: the renamed form also starts with
         // `Target: "` but must not be parsed as a found/damaged/missing disposition.
         if let (foundName, target) = matchLine(line) {
+            // The Target:-variant means the holder is itself a roster target — and one whose
+            // OWN data is gone, since its file holds the target's. The engine prints one line
+            // per holder, so a real swap prints a second line naming this file as ITS target;
+            // whichever arrives first wins, because markPending skips rename-satisfied names
+            // and the rename below clears a pending one. Holding the holder keeps its own
+            // shortfall counted (and a non-recovery holder stays "not in set" via markPending).
+            if line.hasPrefix("Target: "), foundName != target, fileIDsByName[foundName] != nil {
+                events.append(contentsOf: markPending(foundName, missing: false))
+            }
+            if let id = fileIDsByName[target], nonRecoveryIDs.contains(id) {
+                // A repair never renames data into a non-recovery file's name (vendor patch 5),
+                // so the row stays "not in set" and the file is not present under its own name.
+                events.append(otherFileStatus(id, present: false))
+                return events
+            }
             renamedTargets.insert(target)
             pendingMissing.remove(target)
             pendingDamaged.remove(target)
-            // The Target:-variant means the wrong-named file is itself a roster target whose
-            // own slot is rename-satisfied too (the swap case prints one line for both).
-            if line.hasPrefix("Target: "), fileIDsByName[foundName] != nil {
-                renamedTargets.insert(foundName)
-                pendingMissing.remove(foundName)
-                pendingDamaged.remove(foundName)
-                if let id = fileIDsByName[foundName] {
-                    events.append(.fileStatusChanged(id: id, status: renameStatus(from: target)))
-                }
-            }
             renamedCount = renamedTargets.count
             if let id = fileIDsByName[target] {
                 events.append(.fileStatusChanged(id: id, status: renameStatus(from: foundName)))
@@ -118,19 +132,23 @@ public struct TurboOutputParser {
         // after that file's `no data found` line, which was therefore not damage. Z is X's own
         // file, or X's data under another name (repair renames it).
         if let match = perfectMatchLine(bytes) {
+            let displayName = EngineRunSupport.engineDisplayName(for: match.name)
+            let isOwnFile = match.path.utf8.reversed().starts(
+                with: ("/" + displayName).utf8.reversed())
             // A non-recovery file is only ever checked as a whole, so this line is how the
-            // engine confirms it is present. It is never settled or renamed like a target.
+            // engine confirms it is there — but only under its OWN name: a repair never renames
+            // another file into its place (vendor patch 5), so data found elsewhere leaves the
+            // set still missing it. Either way the row stays "not in set".
             if nonRecoveryIDs.contains(match.id) {
-                events.append(otherFileStatus(match.id, present: true))
+                events.append(otherFileStatus(match.id, present: isOwnFile))
                 return events
             }
-            let displayName = EngineRunSupport.engineDisplayName(for: match.name)
             reportedIDs.insert(match.id)
             for name in [match.name, displayName] {
                 pendingDamaged.remove(name)
                 pendingMissing.remove(name)
             }
-            if match.path.utf8.reversed().starts(with: ("/" + displayName).utf8.reversed()) {
+            if isOwnFile {
                 let restored =
                     awaitingRepair.remove(displayName) ?? awaitingRepair.remove(match.name)
                 if restored != nil { repairedCount += 1 }
@@ -150,9 +168,11 @@ public struct TurboOutputParser {
         // extra file (`File: "Z" - found …`) or a target whose own data is gone
         // (`Target: "Y" - damaged. Found …`, which also leaves Y pending as damaged).
         if let foreign = foreignBlocksLine(bytes) {
-            // A holder that IS the target (its file re-read by the extra-file scan) would
-            // count the target's own blocks twice.
-            if foreign.holderID != foreign.targetID {
+            // Skip only the target's own file re-read under the SAME printed name (the
+            // extra-file scan), which would count its blocks twice. Comparing names rather
+            // than row ids keeps a genuine credit from a file the roster maps to the same row
+            // under a different spelling — an ASCII-field name plus its Unicode alias.
+            if foreign.holder != foreign.target {
                 blocksFoundElsewhere[foreign.targetID, default: []].append(foreign.found)
             }
             if foreign.holderIsTarget {
@@ -398,19 +418,33 @@ public struct TurboOutputParser {
     }
 
     /// `/path/Z is a perfect match for X` — unquoted: Z is the engine's full disk path, X the
-    /// RAW description name (not the translated form Target lines print). Split right to left
-    /// and accepted only when X names a roster file and Z is an absolute path.
+    /// RAW description name (not the translated form Target lines print). Accepted only when X
+    /// names a roster file and Z is an absolute path.
+    ///
+    /// Either half may itself contain the delimiter, so the split is ambiguous. Candidates are
+    /// tried LEFT to right and the first one naming a roster file wins: the trailing name is
+    /// printed last, so a file whose own name ends in "… is a perfect match for <target>" would
+    /// otherwise be read as that target and clear its damage (its own name matches at an
+    /// earlier split, so it wins). Two bounds keep a crafted name cheap — the engine allows a
+    /// 100 KB name and prints it verbatim on its callback thread: a candidate longer than any
+    /// roster key is skipped without decoding (translation never shortens a name), and at most
+    /// `maxDecodedSplits` candidates are decoded, which one honest line never exceeds.
     private func perfectMatchLine(_ bytes: [UInt8]) -> (path: String, name: String, id: UUID)? {
         let delimiter = Self.perfectMatchDelimiter
         guard bytes.first == UInt8(ascii: "/"), bytes.count > delimiter.count else { return nil }
-        for start in stride(from: bytes.count - delimiter.count, through: 1, by: -1)
+        var decoded = 0
+        for start in 1...(bytes.count - delimiter.count)
         where bytes[start..<start + delimiter.count].elementsEqual(delimiter) {
-            let name = String(decoding: bytes[(start + delimiter.count)...], as: UTF8.self)
-            guard
-                let id = fileIDsByName[name]
-                    ?? fileIDsByName[EngineRunSupport.engineDisplayName(for: name)]
-            else { continue }
-            return (String(decoding: bytes[..<start], as: UTF8.self), name, id)
+            let tail = bytes[(start + delimiter.count)...]
+            guard tail.count <= maxRosterKeyBytes else { continue }
+            let name = String(decoding: tail, as: UTF8.self)
+            if let id = fileIDsByName[name]
+                ?? fileIDsByName[EngineRunSupport.engineDisplayName(for: name)]
+            {
+                return (String(decoding: bytes[..<start], as: UTF8.self), name, id)
+            }
+            decoded += 1
+            if decoded == Self.maxDecodedSplits { return nil }
         }
         return nil
     }
@@ -423,6 +457,7 @@ public struct TurboOutputParser {
     }
 
     private struct ForeignBlocks {
+        let target: String
         let targetID: UUID
         let found: Int
         let holder: String
@@ -456,8 +491,8 @@ public struct TurboOutputParser {
             let holderID = fileIDsByName[holder]
             if holderIsTarget, holderID == nil { continue }
             return ForeignBlocks(
-                targetID: targetID, found: found, holder: holder, holderID: holderID,
-                holderIsTarget: holderIsTarget)
+                target: target, targetID: targetID, found: found, holder: holder,
+                holderID: holderID, holderIsTarget: holderIsTarget)
         }
         return nil
     }
@@ -567,7 +602,13 @@ public struct TurboOutputParser {
     /// partial copy), and "several target files" lines don't say whose blocks they found. So
     /// each estimate starts at the file's blocks minus its best single source, then moves
     /// within its bracket until the files add up to the engine's own exact shortfall — which
-    /// makes it exact whenever a single file is ambiguous.
+    /// pins it exactly when only one settled file is ambiguous.
+    ///
+    /// It stays an estimate otherwise. When several files share duplicate-content blocks (a
+    /// set of volumes with large all-zero runs is the common case), the engine credits those
+    /// blocks to whichever file its scan reached first, so its own per-file numbers — and
+    /// these counts with them — can sit on the wrong row. Distinguishing them needs the set's
+    /// own slice checksums, which this parser does not read.
     private func blocksNeeded(for ids: Set<UUID>) -> [UUID: Int] {
         var estimates: [UUID: NeedEstimate] = [:]
         for id in ids {

@@ -68,6 +68,11 @@ public final class EmbeddedEngine: PAR2Engine, Sendable {
         }
 
         let roster = EngineRunSupport.paintRoster(anchor: anchor, continuation: continuation)
+        if let rejection = roster.rejection {
+            // The engine runs IN-PROCESS: a set it cannot survive must never reach it.
+            continuation.yield(.finished(.failure(.launchFailed(rejection))))
+            return
+        }
         continuation.yield(.docStatusChanged(.checking))
         EngineRunSupport.warnIfFolderUnreadable(
             route: route, anchor: anchor, continuation: continuation)
